@@ -1,4 +1,4 @@
-module ibc_xsec
+module ibd_xsec
 
 using DelimitedFiles
 using Interpolations
