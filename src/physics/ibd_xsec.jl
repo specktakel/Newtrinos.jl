@@ -18,7 +18,7 @@ abstract type IBDModel <: Newtrinos.Physics.xsec.XsecModel end
 
 Tabulated cross-section of Strumia and Vissani (https://arxiv.org/abs/astro-ph/0302055).
 """
-struct StrumiaVissani <: IBCModel end
+struct StrumiaVissani <: IBDModel end
 
 @kwdef struct IBDXsec <: Newtrinos.Physics
     cfg::IBDModel
