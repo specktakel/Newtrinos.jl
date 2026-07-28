@@ -2,30 +2,20 @@ module reactor_flux
 
 using Interpolations
 using DataStructures
-using PCHIPInterpolator
+using PCHIPInterpolation
 using CSV
 using DataFrames
 using ..Newtrinos
 
-export ReactorFluxConfig, DayaBay, DayaBaySystematics
+export ReactorFluxConfig, HuberFlux
 
 const datadir = @__DIR__
 
 
-abstract type NominalFlux end
+abstract type NominalFluxModel end
 
-struct HuberFlux <: NominalFluxModel
-    cfg::ReactorFluxConfig
-end
-
-struct DayaBayFlux <: NominalFluxModel
-    cfg::ReactorFluxConfig
-end
 
 abstract type FluxSystematicsModel end
-
-struct DayaBaySystematics <: FluxSystematicsModel
-end
 
 
 @kwdef struct ReactorFluxConfig{F<:NominalFluxModel, S<:FluxSystematicsModel}
@@ -33,6 +23,26 @@ end
     systematics_model::S = DayaBaySystematics()
     isotope_ratio::NamedTuple = (U_235 = 1., U_239 = 0., Pu_241 = 0.,)
 end
+
+
+struct HuberFlux <: NominalFluxModel
+    cfg::ReactorFluxConfig
+end
+
+struct HuberSystematics <: FluxSystematicsModel
+    cfg::ReactorFluxConfig
+end
+
+
+struct DayaBayFlux <: NominalFluxModel
+    cfg::ReactorFluxConfig
+end
+
+
+struct DayaBaySystematics <: FluxSystematicsModel
+end
+
+
 
 @kwdef struct ReactorFlux <: Newtrinos.Physics
     cfg::ReactorFluxConfig
@@ -122,7 +132,7 @@ function get_daya_bay_flux(filename)
     itp = Interpolator(binc, flux)
 end
 
-function get_nominal_flux(cfg::DayaBay)
+function get_nominal_flux(cfg::DayaBayFlux)
 end
     
 function get_nominal_flux(cfg::DayaBayFlux)

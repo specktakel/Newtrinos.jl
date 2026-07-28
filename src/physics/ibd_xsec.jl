@@ -2,7 +2,9 @@ module ibd_xsec
 
 using DelimitedFiles
 using Interpolations
-using DataStructures
+using PCHIPInterpolation
+using DataFrames
+using CSV
 using ..Newtrinos
 
 
@@ -10,7 +12,7 @@ using ..Newtrinos
 """
     Abstract type for inverse beta decay cross-section models.
 """
-abstract type IBDModel <: Newtrinos.Physics.xsec.XsecModel end
+abstract type IBDModel end
 
 
 """
