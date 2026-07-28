@@ -39,12 +39,12 @@ end
 
 
 function get_params(cfg::StrumiaVissani)
-    return (,)
+    return (;)
 end
 
 
 function get_priors(cfg::StrumiaVissani)
-    return (,)
+    return (;)
 end
 
 
