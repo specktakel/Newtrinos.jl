@@ -7,6 +7,7 @@ using DataStructures
 using CairoMakie
 using Accessors
 using Logging
+using BAT
 import ..Newtrinos
 
 @kwdef struct DayaBay <: Newtrinos.Experiment
@@ -145,7 +146,7 @@ function get_assets(physics; datadir = @__DIR__)
         end
     end
 
-    reso = transpose(res)
+    energy_resolution = transpose(res)
 
     #bin edges
     E_antinu = Vector(range(1, 13; step=0.01))
@@ -166,6 +167,7 @@ function get_assets(physics; datadir = @__DIR__)
 
     predicted_no_oscs = Vector{Vector{Float64}}()
     flux_weights = Vector{Vector{Float64}}()
+    flux_weights_bar_osc = Vector{Vector{Float64}}()
     
     for period in period_list
     
@@ -199,10 +201,12 @@ function get_assets(physics; datadir = @__DIR__)
         efficiency = repeat(eff, length(reactor_list))
         target_mass = repeat(mass, length(reactor_list));
 
+        flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
+        push!(flux_weights_bar_osc, flux_weight_bar_osc)
         # later, include P_ee here as well
         # now, this has dimension (AD x reactor).flatten(), then will have additional energy dimension to account for oscillations
         flux_weight = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
-        smeared = reso * ibd_weighted_flux .* sum(flux_weight)
+        smeared = energy_resolution * ibd_weighted_flux .* sum(flux_weight)
         idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
         result = zeros(size(energy_bins[1:end-1]))
         # integrate by summing over Eprompt in the bins of Dayabay
@@ -222,40 +226,72 @@ function get_assets(physics; datadir = @__DIR__)
     normalized_ad_contribs_to_far_hall = ad_contribs_to_far_hall ./ sum(ad_contribs_to_far_hall)
     covmat_prefactor = sum(normalized_ad_contribs_to_far_hall .^ 2)
 
-    observed = convert(Vector{Float64}, dfIBD_dict["dfIBD_EH3"].N)
+    observed = round.(Int, dfIBD_dict["dfIBD_EH3"].N)
+
+    # rescale predicted results bc we do not have a proper normalisation at the moment, make this a fit parameter later on
+    norm = sum(sum(Npred_EH3_nooscs)) / sum(sum(predicted_no_oscs))
+    for i in eachindex(predicted_no_oscs)
+        predicted_no_oscs[i] .*= norm
+    end
 
 
-    
+
     assets = (;
         E_arrs, 
         L_arrs, 
         Npred_EH3_nooscs,
-        rel_unc_diag,
-        corr_mat,
-        covmat_prefactor,
         observed,
-        period_list,
         energy_bins,
-        energy,
+        period_list,
+        energy_resolution,
         predicted_no_oscs,
-        flux_weights,
-        #ibd_weighted_flux
-        #xsec_eval,
-        flux_eval,
+        xsec_eval,     
+        E_antinu_binc,
+        E_antinu,
+        E_prompt_binc,
+        E_prompt,   
+        flux_weights_bar_osc,
+        norm,
+        energy
     )
 
 end
 
 
 function get_expected_per_period(params, period, physics, assets)
-    E = assets.E_arrs[period]
+    # insert the flux calculation, smearing here bc it depends on parameters
+    E_antinu_binc = assets.E_antinu_binc
+    E_prompt_binc = assets.E_prompt_binc
+    E_prompt = assets.E_prompt
+    energy_bins = assets.energy_bins
     L = assets.L_arrs[period]
-    prob_arr = physics.osc.osc_prob(E, L, params, anti=true)[:, :, 1, 1]'
+    energy_resolution = assets.energy_resolution
+    prob_arr = physics.osc.osc_prob(E_antinu_binc, L, params, anti=true)[:, :, 1, 1]'
     L2 = L .^ 2
-    prob = vec(sum(prob_arr./L2, dims=1) ./ sum(1 ./L2))
-    # shift all scales and stuff in Npred_EH3_nooscs, i.e. this becomes part of the model,
-    # the modification for the oscillation can stay where it is!
-    Npred_EH3_with_osc = assets.Npred_EH3_nooscs[period] .* prob
+    flux_weight = assets.flux_weights_bar_osc[period]
+    for i in eachindex(flux_weight)
+        prob_arr[i, :] .*= flux_weight[i]
+    end
+    flux_weight_with_osc = vec(sum(prob_arr, dims=1))
+    xsec_eval = assets.xsec_eval
+    flux = physics.flux
+    pulls = params.pulls
+    nom_flux = flux.nominal_flux.(E_antinu_binc)
+    sys_flux = [flux.sys_flux(e, pulls) for e in E_antinu_binc]
+    flux_eval = nom_flux .+ sys_flux
+    # has arbitrary normalisation
+    p_ibd_weighted_flux = flux_eval .* xsec_eval .* flux_weight_with_osc
+    #println(size(p_ibd_weighted_flux))
+    smeared = energy_resolution * p_ibd_weighted_flux
+    #println(size(smeared))
+    idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
+    result = zeros(eltype(pulls), size(energy_bins[1:end-1]))
+    # integrate by summing over Eprompt
+    for c in eachindex(energy_bins[1:end-1])
+        result[c] = sum(smeared[idx .== c])
+    end
+
+    result .* assets.norm
 end
 
 # Define function to give the expected events at the far hall (EH3)
@@ -266,8 +302,7 @@ end
 function get_forward_model(physics, assets)
     function forward_model(params)
         exp_events = get_expected(params, physics, assets)
-        cov = Symmetric(Diagonal(exp_events .* assets.rel_unc_diag) * assets.corr_mat * Diagonal(exp_events .* assets.rel_unc_diag)) * assets.covmat_prefactor + Diagonal(exp_events)
-        Distributions.MvNormal(exp_events, cov)
+        distprod(Poisson.(exp_events))
     end
 end
 

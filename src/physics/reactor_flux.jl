@@ -7,6 +7,7 @@ using LinearAlgebra
 using Integrals
 using CSV
 using DataFrames
+using Distributions
 using ..Newtrinos
 
 export ReactorFluxConfig, HuberFlux, HuberSystematics, DayaBayFlux, DayaBaySystematics
@@ -103,23 +104,20 @@ function get_sys_flux(cfg::HuberSystematics)
 end
 
 
-function get_priors(cfg::HuberFlux)
-    return (;)
-end
-
-
-function get_params(cfg::HuberFlux)
-    return (;)
-end
-
-
-
 function get_params(cfg::DayaBayFlux)
-    params = (;)
+    params = (
+        pulls = zeros(25),
+    )
+    return params
 end
 
 function get_priors(cfg::DayaBayFlux)
-    priors = (;)
+    exp = zeros(25)
+    cv = Diagonal(ones(25))
+    priors = (
+        pulls = Distributions.MvNormal(exp, cv),
+    )
+    return priors
 end
 
 function get_daya_bay_flux()
@@ -211,8 +209,8 @@ function get_sys_flux(cfg::DayaBaySystematics)
     
     function systematic(E, pulls)
         _huber = huber(E)
-        psi_k = sum([y_nk[n, :] * node_itp[n](E) for n in eachindex(y_0)])
-        return _huber * sum(pulls .*psi_k)
+        psi_k = sum([y_nk[n, :] .* node_itp[n](E) for n in eachindex(y_0)])
+        return _huber * sum(pulls .* psi_k)
     end
     systematic
 end
