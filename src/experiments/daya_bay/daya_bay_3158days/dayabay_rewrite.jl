@@ -280,7 +280,8 @@ function get_assets(physics; datadir = @__DIR__)
     #    predicted_no_oscs[i] .*= norm
     #end
 
-
+    nom_flux       = physics.flux.nominal_flux.(E_antinu_binc)
+    prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
 
     assets = (;
         E_arrs, 
@@ -305,25 +306,13 @@ function get_assets(physics; datadir = @__DIR__)
         dfIBD_dict,
         baseline_av_best_fit_prob_arr,
         bkg_templates,
-        bkg_EH
+        bkg_EH,
+        nom_flux,
+        prompt_bin_idx,
     )
 
 end
 
-function get_expected_per_period(params, physics, L, flux_weight, E_antinu_binc, xsec_eval)
-    prob_arr = physics.osc.osc_prob(E_antinu_binc, L, params, anti=true)[:, :, 1, 1]'
-    flux = physics.flux
-    L2 = L .^ 2
-    for i in eachindex(flux_weight)
-        prob_arr[i, :] .*= flux_weight[i]
-    end
-    flux_weight_with_osc = vec(sum(prob_arr, dims=1))
-    nom_flux = flux.nominal_flux.(E_antinu_binc)
-    sys_flux = [flux.sys_flux(e, params.pulls) for e in E_antinu_binc]
-    flux_eval = nom_flux .+ sys_flux
-    # has arbitrary normalisation
-    return @. flux_eval * xsec_eval * flux_weight_with_osc
-end
 
 function get_expected_per_EH(params, EH, physics, assets)
     E_antinu_binc = assets.E_antinu_binc
@@ -334,27 +323,37 @@ function get_expected_per_EH(params, EH, physics, assets)
     energy_resolution = assets.energy_resolution
     osc_prob = physics.osc.osc_prob
     pulls = params.pulls
+    T = eltype(pulls)
     xsec_eval = assets.xsec_eval
-    p_ibd_weighted_flux = zeros(eltype(pulls), (length(periods), length(E_antinu_binc)))
+    p_ibd_weighted_flux = zeros(T, (length(periods), length(E_antinu_binc)))
     L_arrs = assets.L_arrs[EH]
     flux_weights = assets.flux_weights_bar_osc[EH]
-    for (c, period) in enumerate(periods)
-        
-        p_ibd_weighted_flux[c, :] = get_expected_per_period(
-            params, physics, L_arrs[c], flux_weights[c], E_antinu_binc, xsec_eval,
-        )
-        #println(size(p_ibd_weighted_flux))
+    flux = physics.flux
+    nom_flux = assets.nom_flux
+
+    sys_flux  = [flux.sys_flux(e, pulls) for e in E_antinu_binc]
+    flux_eval = assets.nom_flux .+ sys_flux
+
+    osc_weighted = zeros(T, length(E_antinu_binc))
+    for c in eachindex(periods)
+        S = @view osc_prob(E_antinu_binc, L_arrs[c], params, anti=true)[:, :, 1, 1]
+        mul!(osc_weighted, S, flux_weights[c], 1, 1)   # osc_weighted += S * w
     end
-    smeared = energy_resolution * vec(sum(p_ibd_weighted_flux, dims=1))
+    weighted  = @. flux_eval * assets.xsec_eval * osc_weighted
+
+    smeared = assets.energy_resolution * weighted
     #println(size(smeared))
-    idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
-    result = zeros(eltype(pulls), size(energy_bins[1:end-1]))
-    # integrate by summing over Eprompt
-    for c in eachindex(energy_bins[1:end-1])
-        result[c] = sum(smeared[idx .== c])
+    idx    = assets.prompt_bin_idx
+    nbins  = length(assets.energy_bins) - 1
+    result = zeros(T, nbins)
+    @inbounds for k in eachindex(idx)
+        c = idx[k]
+        (1 <= c <= nbins) && (result[c] += smeared[k])
     end
 
-    result .* assets.norm[EH] * params.norm
+    result .*= assets.norm[EH] * params.norm
+
+    return result
 end
 
 
