@@ -41,7 +41,10 @@ end
 
 function get_params()
     # (background_norm = ones(5),)
-    return (norm=1.,)
+    return (
+        norm=1.,
+        per_EH_norm = zeros(3),
+    )
 end
 
 
@@ -52,7 +55,10 @@ function get_priors()
         background_norm = Distributions.MvNormal(exp, cv),
     )
     #return priors
-    return (norm = Distributions.Uniform(0.5, 1.5),)
+    return (
+        norm = Distributions.Uniform(0.8, 1.5),
+        per_EH_norm = Distributions.MvNormal(zeros(3), Diagonal(0.01 .* ones(3))),
+    )
 end
 
 function get_assets(physics; datadir = @__DIR__)
@@ -199,7 +205,7 @@ function get_assets(physics; datadir = @__DIR__)
     xsec_eval = xsec.(E_antinu_binc)
     ibd_weighted_flux = flux_eval .* xsec_eval
     
-    predicted_no_oscs = Vector{Vector{Vector{Float64}}}()
+    predicted_oscs = Vector{Vector{Vector{Float64}}}()
     flux_weights_bar_osc = Vector{Vector{Vector{Float64}}}()
     baseline_av_best_fit_prob_arr = Vector{Vector{Float64}}()
     
@@ -210,8 +216,6 @@ function get_assets(physics; datadir = @__DIR__)
 
     efficiency = Vector{Vector{Vector{Float64}}}()
 
-    norm = []
-
     for EH in EH_list
         E_arr = dfIBD_dict["dfIBD_EH$(EH)"].Ec .+ 0.78
         # indices: AD x reactor
@@ -219,18 +223,19 @@ function get_assets(physics; datadir = @__DIR__)
         push!(flux_weights_bar_osc, Vector{Vector{Float64}}())
         push!(Npred_EH_nooscs, Vector{Vector{Float64}}())
         push!(Npred_EH_oscs, Vector{Vector{Float64}}())
-        push!(predicted_no_oscs, Vector{Vector{Float64}}())
+        push!(predicted_oscs, Vector{Vector{Float64}}())
         #push!(efficiency, Vector{Vector{Float64}}())
         for period in period_list
             df_period = filter(row -> row["$(period)-AD Period"], df_exp)
-            # takes only data of EH3 (furthest)
             df_period = filter(row -> row["EH"] == "EH$(EH)", df_period)
+
             # shape depends on period, as #AD differs
             L_matrix = df_period[:, ["D1", "D2", "L1", "L2", "L3", "L4"]]
             # flatten
             L_arr = vec(Matrix(L_matrix))
             push!(E_arrs, E_arr)
             push!(L_arrs[end], L_arr)
+
             # for comparison with proper prediction, keep this
             Npred_EH_after_best_fit_osc = dfIBD_dict["dfIBD_EH$(EH)"][:, "Npred_$(periods_dict[period])AD"]
             best_fit_prob_arr = bestift_osc.osc_prob(E_arr, L_arr, bestift_osc.params, anti=true)[:, :, 1, 1]'
@@ -239,10 +244,7 @@ function get_assets(physics; datadir = @__DIR__)
             push!(baseline_av_best_fit_prob_arr, baseline_average_best_fit_prob_arr)
             # unoscillated N predicted EH3:
             Npred_EH_noosc = Npred_EH_after_best_fit_osc ./ baseline_average_best_fit_prob_arr
-            # TODO: ONLY REPLACE THIS HERE! DO NOT CHANGE ANYTHING ELSE
-            # tis but the flux / (4*pi*L^2) * IBD, put through the detector response, multiplied by respective efficiency and target mass
-
-            # Npred_EH3_noosc_from_flux = 
+           
             push!(Npred_EH_nooscs[end], Npred_EH_noosc)
             push!(Npred_EH_oscs[end], Npred_EH_after_best_fit_osc)
             
@@ -253,34 +255,36 @@ function get_assets(physics; datadir = @__DIR__)
 
             # collects the weights with which the anti-nu flux has to be multiplied
             # dimensions: period x (#AD x reactor).flatten latter two stem from L_arr
-            flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
+            flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2
+            flux_weight_w_osc = flux_weight_bar_osc .* best_fit_prob_arr
+            smeared = energy_resolution * (ibd_weighted_flux .* sum(flux_weight_bar_osc))
             push!(flux_weights_bar_osc[end], flux_weight_bar_osc)
-            smeared = energy_resolution * ibd_weighted_flux .* sum(flux_weight_bar_osc)
             idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
-            result = zeros(size(energy_bins[1:end-1]))
+            result = zeros(length(energy_bins[1:end-1]))
             # integrate by summing over Eprompt in the bins of Dayabay
             for c in eachindex(energy_bins[1:end-1])
                 result[c] = sum(smeared[idx .== c])
             end
 
-            push!(predicted_no_oscs[end], result)
+            push!(predicted_oscs[end], result)
         end
-        #calculate per EH norm of forward-modelled counts
-        push!(norm, sum(sum(Npred_EH_oscs[end])) / sum(sum(predicted_no_oscs[end])))
+    #calculate norm of forward-modelled counts at best fit osc params, 
+    # sort of arbitrary but keeps the global anti-nu normalisation fit parameter close to 1
     end
+    norm = sum(sum(sum(Npred_EH_oscs))) / sum(sum(sum(predicted_oscs)))
+    #norm = sum(Npred_EH_oscs) / sum(predicted_oscs)
+    #println(norm)
     
     observed = []
     for EH in EH_list
-        push!(observed, round.(Int, dfIBD_dict["dfIBD_EH$(EH)"].Nobs))
+        push!(observed, round.(Int, dfIBD_dict["dfIBD_EH$(EH)"].Npred))
     end
-    # observed = 
-    #observed = round.(Int, dfIBD_dict["dfIBD_EH1"].N)
-    observed = reshape(stack(observed), 26*3) 
-    #for i in eachindex(predicted_no_oscs)
-    #    predicted_no_oscs[i] .*= norm
-    #end
 
-    nom_flux       = physics.flux.nominal_flux.(E_antinu_binc)
+    # flatten so we may use dot syntax to evaluate the joint likelihood over all bins
+    observed = reshape(stack(observed), Int((length(energy_bins) - 1) * length(EH_list)))
+
+
+    nom_flux = physics.flux.nominal_flux.(E_antinu_binc) * norm
     prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
 
     assets = (;
@@ -293,7 +297,7 @@ function get_assets(physics; datadir = @__DIR__)
         period_list,
         EH_list,
         energy_resolution,
-        predicted_no_oscs,
+        predicted_oscs,
         xsec_eval,     
         E_antinu_binc,
         E_antinu,
@@ -313,7 +317,56 @@ function get_assets(physics; datadir = @__DIR__)
 
 end
 
+function get_expected!(out, params, physics, assets)
+    E_antinu_binc = assets.E_antinu_binc
+    pulls = params.pulls
+    T = eltype(params.norm)
 
+    sys_flux  = [physics.flux.sys_flux(e, pulls) for e in E_antinu_binc]
+    flux_xsec = @. (assets.nom_flux + sys_flux) * assets.xsec_eval
+
+    nbins = length(assets.energy_bins) - 1
+    for (i, EH) in enumerate(assets.EH_list)
+        seg = @view out[(i-1)*nbins+1 : i*nbins]
+        get_expected_per_EH!(seg, params, EH, physics, assets, flux_xsec)
+    end
+    return out
+end
+
+function get_expected(params, physics, assets)
+    nbins = length(assets.energy_bins) - 1
+    out = Vector{eltype(params.norm)}(undef, nbins * length(assets.EH_list))
+    get_expected!(out, params, physics, assets)
+end
+
+function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
+    E_antinu_binc = assets.E_antinu_binc
+    periods = assets.period_list
+    osc_prob = physics.osc.osc_prob
+    L_arrs = assets.L_arrs[EH]
+    flux_weights = assets.flux_weights_bar_osc[EH]
+    T = eltype(out)
+
+    osc_weighted = zeros(T, length(E_antinu_binc))
+    for c in eachindex(periods)
+        S = @view osc_prob(E_antinu_binc, L_arrs[c], params, anti=true)[:, :, 1, 1]
+        mul!(osc_weighted, S, flux_weights[c], 1, 1)
+    end
+
+    smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
+
+    idx   = assets.prompt_bin_idx
+    nbins = length(out)
+    fill!(out, zero(T))
+    @inbounds for k in eachindex(idx)
+        c = idx[k]
+        (1 <= c <= nbins) && (out[c] += smeared[k])
+    end
+    out .*= params.norm * (1. + params.per_EH_norm[EH])
+    return out
+end
+
+"""
 function get_expected_per_EH(params, EH, physics, assets)
     E_antinu_binc = assets.E_antinu_binc
     E_prompt_binc = assets.E_prompt_binc
@@ -360,6 +413,7 @@ end
 function get_expected(params, physics, assets)
     reshape(stack([get_expected_per_EH(params, EH, physics, assets) for EH in assets.EH_list]), 26 * 3)
 end
+"""
 
 function get_forward_model(physics, assets)
     function forward_model(params)
@@ -374,38 +428,43 @@ function get_plot(physics, assets)
         
         m = mean(get_forward_model(physics, assets)(params))
         v = var(get_forward_model(physics, assets)(params))
+
+        size_per_EH = length(data) / 3
     
         f = Figure()
-        ax = Axis(f[1,1])
+
+        for i in 1:3
+            ax = Axis(f[1,1])
+            
+            plot!(ax, assets.energy, data, color=:black, label="Observed")
+            stephist!(ax, assets.energy, weights=m, bins=assets.energy_bins, label="Expected")
+            barplot!(ax, assets.energy, m .+ sqrt.(v), width=diff(assets.energy_bins), gap=0, fillto= m .- sqrt.(v), alpha=0.5, label="Standard Deviation")
+            
+            ax.ylabel="Counts"
+            ax.title="Daya Bay"
+            axislegend(ax, framevisible = false)
+            
+            
+            ax2 = Axis(f[2,1])
+            plot!(ax2, assets.energy, data ./ m, color=:black, label="Observed")
+            hlines!(ax2, 1, label="Expected")
+            barplot!(ax2, assets.energy, 1 .+ sqrt.(v) ./ m, width=diff(assets.energy_bins), gap=0, fillto= 1 .- sqrt.(v)./m, alpha=0.5, label="Standard Deviation")
+            ylims!(ax2, 0.9, 1.1)
+            
+            ax.xticksvisible = false
+            ax.xticklabelsvisible = false
+            
+            rowsize!(f.layout, 1, Relative(3/4))
+            rowgap!(f.layout, 1, 0)
+            
+            ax2.xlabel="Eₚ (MeV)"
+            ax2.ylabel="Counts/Expected"
         
-        plot!(ax, assets.energy, data, color=:black, label="Observed")
-        stephist!(ax, assets.energy, weights=m, bins=assets.energy_bins, label="Expected")
-        barplot!(ax, assets.energy, m .+ sqrt.(v), width=diff(assets.energy_bins), gap=0, fillto= m .- sqrt.(v), alpha=0.5, label="Standard Deviation")
-        
-        ax.ylabel="Counts"
-        ax.title="Daya Bay"
-        axislegend(ax, framevisible = false)
-        
-        
-        ax2 = Axis(f[2,1])
-        plot!(ax2, assets.energy, data ./ m, color=:black, label="Observed")
-        hlines!(ax2, 1, label="Expected")
-        barplot!(ax2, assets.energy, 1 .+ sqrt.(v) ./ m, width=diff(assets.energy_bins), gap=0, fillto= 1 .- sqrt.(v)./m, alpha=0.5, label="Standard Deviation")
-        ylims!(ax2, 0.9, 1.1)
-        
-        ax.xticksvisible = false
-        ax.xticklabelsvisible = false
-        
-        rowsize!(f.layout, 1, Relative(3/4))
-        rowgap!(f.layout, 1, 0)
-        
-        ax2.xlabel="Eₚ (MeV)"
-        ax2.ylabel="Counts/Expected"
-    
-        xlims!(ax, minimum(assets.energy_bins), maximum(assets.energy_bins))
-        xlims!(ax2, minimum(assets.energy_bins), maximum(assets.energy_bins))
-        
-        ylims!(ax, 0, 60000)
+            xlims!(ax, minimum(assets.energy_bins), maximum(assets.energy_bins))
+            xlims!(ax2, minimum(assets.energy_bins), maximum(assets.energy_bins))
+            
+            ylims!(ax, 0, 60000)
+        end
         
         f
     
