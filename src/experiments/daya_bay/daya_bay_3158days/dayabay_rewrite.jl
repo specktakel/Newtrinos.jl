@@ -31,12 +31,28 @@ function configure(physics=default_physics())
     assets = get_assets(physics)
     return DayaBay(
         physics = physics,
-        params = (;),
-        priors = (;),
+        params = get_params(),
+        priors = get_priors(),
         assets = assets,
         forward_model = get_forward_model(physics, assets),
         plot = get_plot(physics, assets)
     )
+end
+
+function get_params()
+    # (background_norm = ones(5),)
+    return (norm=1.,)
+end
+
+
+function get_priors()
+    exp = ones(5)
+    cv = Diagonal(ones(5))
+    priors = (
+        background_norm = Distributions.MvNormal(exp, cv),
+    )
+    #return priors
+    return (norm = Distributions.Uniform(0.5, 1.5),)
 end
 
 function get_assets(physics; datadir = @__DIR__)
@@ -91,7 +107,11 @@ function get_assets(physics; datadir = @__DIR__)
     # Dicts to fill
     dfBKG_dict = Dict()
     dfIBD_dict = Dict()
+
+    # Tell me, do we really need this?
+    bkg_types = ["Nacc", "Nalphan", "Namc", "Nlihe", "Nfastn"]
     
+    # Parse IBD and background files
     for EH in EH_list
         fileBKG = joinpath(datadir,  "DayaBay_BackgroundSpectrum_EH$(EH)_3158days.txt")
         fileIBD = joinpath(datadir,  "DayaBay_IBDPromptSpectrum_EH$(EH)_3158days.txt")
@@ -112,6 +132,24 @@ function get_assets(physics; datadir = @__DIR__)
         dfIBD_dict["dfIBD_EH$EH"][!, "N"] = dfIBD_dict["dfIBD_EH$EH"].Nobs .- BKG
     end
 
+    # Extract all background templates
+    bkg_templates = Dict()
+    for EH in EH_list
+        for period in period_list
+            bkg_templates["$(period)_$(EH)"] = Matrix(dfBKG_dict["dfBKG_$(period)_EH$(EH)"][!, [:Nacc, :Nalphan, :Namc, :Nlihe, :Nfastn]])
+        end
+    end
+
+    # For now, sum background templates for each EH over the periods
+    bkg_EH = Dict()
+    for EH in EH_list
+        bkg = []
+        for period in period_list
+            push!(bkg, bkg_templates["$(period)_$(EH)"])
+        end
+        bkg_EH[EH] = sum(bkg, dims=1)[1]
+    end
+
     energy_bins = copy(dfBKG_dict["dfBKG_Six_EH3"].Emin)
     energy = copy(dfBKG_dict["dfBKG_Six_EH3"].Ec)
     push!(energy_bins, dfBKG_dict["dfBKG_Six_EH3"].Emax[end])
@@ -125,16 +163,12 @@ function get_assets(physics; datadir = @__DIR__)
     @reset bestift_osc.params.Δm²₂₁ = 7.53e-5
     @reset bestift_osc.params.Δm²₃₁ = 2.466e-3 + bestift_osc.params[:Δm²₂₁]
     
-    ad_contribs_to_far_hall = Float64[]
-    E_arrs = Vector{Vector{Float64}}()
-    L_arrs = Vector{Vector{Float64}}()
-    Npred_EH3_nooscs = Vector{Vector{Float64}}()
-
+    
     #maps anti nu energy to prompt energy
     res = CSV.read("response_matrix.txt", DataFrame, delim="\t", skipto=6)
     res = Matrix(res[!, 1:end-1])
     res = float.(res);
-
+    
     #normalise s.t. we can use this as a proper smearing matrix
     for (c, v) in enumerate(eachrow(res))
         # println(c, v)
@@ -145,104 +179,118 @@ function get_assets(physics; datadir = @__DIR__)
             res[c, :] .= res[c, :] ./ sum(v)
         end
     end
-
+    
     energy_resolution = transpose(res)
-
+    
     #bin edges
     E_antinu = Vector(range(1, 13; step=0.01))
     E_prompt = Vector(range(1-0.05, 8; step=0.05))
     E_prompt[1] = 0.7
-
+    
     # bin centers
     E_antinu_binc = (E_antinu[1:end-1] + E_antinu[2:end]) / 2;
     E_prompt_binc = (E_prompt[1:end-1] + E_prompt[2:end]) / 2;
-
+    
     # flux and ibd cross section
     flux = physics.flux.nominal_flux
     xsec = physics.xsec.xsec
-
+    
     flux_eval = flux.(E_antinu_binc)
     xsec_eval = xsec.(E_antinu_binc)
     ibd_weighted_flux = flux_eval .* xsec_eval
+    
+    predicted_no_oscs = Vector{Vector{Vector{Float64}}}()
+    flux_weights_bar_osc = Vector{Vector{Vector{Float64}}}()
+    baseline_av_best_fit_prob_arr = Vector{Vector{Float64}}()
+    
+    E_arrs = Vector{Vector{Float64}}()
+    L_arrs = Vector{Vector{Vector{Float64}}}()
+    Npred_EH_nooscs = Vector{Vector{Vector{Float64}}}()
+    Npred_EH_oscs = Vector{Vector{Vector{Float64}}}()
 
-    predicted_no_oscs = Vector{Vector{Float64}}()
-    flux_weights = Vector{Vector{Float64}}()
-    flux_weights_bar_osc = Vector{Vector{Float64}}()
-    
-    for period in period_list
-    
-        df_period = filter(row -> row["$(period)-AD Period"], df_exp)
-        # takes only data of EH3 (furthest)
-        df_period = filter(row -> row["EH"] == "EH3", df_period)
-    
-        E_arr = dfIBD_dict["dfIBD_EH1"].Ec .+ 0.78
+    efficiency = Vector{Vector{Vector{Float64}}}()
+
+    norm = []
+
+    for EH in EH_list
+        E_arr = dfIBD_dict["dfIBD_EH$(EH)"].Ec .+ 0.78
         # indices: AD x reactor
-        L_matrix = df_period[:, ["D1", "D2", "L1", "L2", "L3", "L4"]]
-        # flatten
-        L_arr = vec(Matrix(L_matrix))
-    
-        # for comparison with proper prediction, keep this
-        Npred_EH3_after_best_fit_osc = dfIBD_dict["dfIBD_EH3"][:, "Npred_$(periods_dict[period])AD"]
-        best_fit_prob_arr = bestift_osc.osc_prob(E_arr, L_arr, bestift_osc.params, anti=true)[:, :, 1, 1]'
-        # get the survival probability as flux scale, scale flux by respective baseline squared, normalise by inverse squared baselines
-        baseline_average_best_fit_prob_arr = vec(sum(best_fit_prob_arr ./ (L_arr .^ 2), dims=1) ./ sum(1 ./(L_arr .^ 2)))
-        # unoscillated N predicted EH3:
-        Npred_EH3_noosc = Npred_EH3_after_best_fit_osc ./ baseline_average_best_fit_prob_arr
-        # TODO: ONLY REPLACE THIS HERE! DO NOT CHANGE ANYTHING ELSE
-        # tis but the flux / (4*pi*L^2) * IBD, put through the detector response, multiplied by respective efficiency and target mass
-    
-        # Npred_EH3_noosc_from_flux = 
-        push!(E_arrs, E_arr)
-        push!(L_arrs, L_arr)
-        push!(Npred_EH3_nooscs, Npred_EH3_noosc)
-        
-        eff = df_period[:, "Efficiency"]
-        mass = df_period[:, "Target [kg]"]
-        efficiency = repeat(eff, length(reactor_list))
-        target_mass = repeat(mass, length(reactor_list));
+        push!(L_arrs, Vector{Vector{Float64}}())
+        push!(flux_weights_bar_osc, Vector{Vector{Float64}}())
+        push!(Npred_EH_nooscs, Vector{Vector{Float64}}())
+        push!(Npred_EH_oscs, Vector{Vector{Float64}}())
+        push!(predicted_no_oscs, Vector{Vector{Float64}}())
+        #push!(efficiency, Vector{Vector{Float64}}())
+        for period in period_list
+            df_period = filter(row -> row["$(period)-AD Period"], df_exp)
+            # takes only data of EH3 (furthest)
+            df_period = filter(row -> row["EH"] == "EH$(EH)", df_period)
+            # shape depends on period, as #AD differs
+            L_matrix = df_period[:, ["D1", "D2", "L1", "L2", "L3", "L4"]]
+            # flatten
+            L_arr = vec(Matrix(L_matrix))
+            push!(E_arrs, E_arr)
+            push!(L_arrs[end], L_arr)
+            # for comparison with proper prediction, keep this
+            Npred_EH_after_best_fit_osc = dfIBD_dict["dfIBD_EH$(EH)"][:, "Npred_$(periods_dict[period])AD"]
+            best_fit_prob_arr = bestift_osc.osc_prob(E_arr, L_arr, bestift_osc.params, anti=true)[:, :, 1, 1]'
+            # get the survival probability as flux scale, scale flux by respective baseline squared, normalise by inverse squared baselines
+            baseline_average_best_fit_prob_arr = vec(sum(best_fit_prob_arr ./ (L_arr .^ 2), dims=1) ./ sum(1 ./(L_arr .^ 2)))
+            push!(baseline_av_best_fit_prob_arr, baseline_average_best_fit_prob_arr)
+            # unoscillated N predicted EH3:
+            Npred_EH_noosc = Npred_EH_after_best_fit_osc ./ baseline_average_best_fit_prob_arr
+            # TODO: ONLY REPLACE THIS HERE! DO NOT CHANGE ANYTHING ELSE
+            # tis but the flux / (4*pi*L^2) * IBD, put through the detector response, multiplied by respective efficiency and target mass
 
-        flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
-        push!(flux_weights_bar_osc, flux_weight_bar_osc)
-        # later, include P_ee here as well
-        # now, this has dimension (AD x reactor).flatten(), then will have additional energy dimension to account for oscillations
-        flux_weight = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
-        smeared = energy_resolution * ibd_weighted_flux .* sum(flux_weight)
-        idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
-        result = zeros(size(energy_bins[1:end-1]))
-        # integrate by summing over Eprompt in the bins of Dayabay
-        for c in eachindex(energy_bins[1:end-1])
-            result[c] = sum(smeared[idx .== c])
-        end
+            # Npred_EH3_noosc_from_flux = 
+            push!(Npred_EH_nooscs[end], Npred_EH_noosc)
+            push!(Npred_EH_oscs[end], Npred_EH_after_best_fit_osc)
+            
+            eff = df_period[:, "Efficiency"]
+            mass = df_period[:, "Target [kg]"]
+            efficiency = repeat(eff, length(reactor_list))
+            target_mass = repeat(mass, length(reactor_list));
 
-        push!(predicted_no_oscs, result)
-        push!(flux_weights, flux_weight)
-        for reactor in reactor_list
-            # remaining index here (:) is AD
-            ad_contrib_this_period_this_reactor = (1 ./ df_period[:, reactor] .^ 2) .* df_period[:, "Target [kg]"] .* df_period[:, "Efficiency"]
-            append!(ad_contribs_to_far_hall, ad_contrib_this_period_this_reactor)
+            # collects the weights with which the anti-nu flux has to be multiplied
+            # dimensions: period x (#AD x reactor).flatten latter two stem from L_arr
+            flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2 / sum(1 ./ L_arr.^2)
+            push!(flux_weights_bar_osc[end], flux_weight_bar_osc)
+            smeared = energy_resolution * ibd_weighted_flux .* sum(flux_weight_bar_osc)
+            idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
+            result = zeros(size(energy_bins[1:end-1]))
+            # integrate by summing over Eprompt in the bins of Dayabay
+            for c in eachindex(energy_bins[1:end-1])
+                result[c] = sum(smeared[idx .== c])
+            end
+
+            push!(predicted_no_oscs[end], result)
         end
+        #calculate per EH norm of forward-modelled counts
+        push!(norm, sum(sum(Npred_EH_oscs[end])) / sum(sum(predicted_no_oscs[end])))
     end
     
-    normalized_ad_contribs_to_far_hall = ad_contribs_to_far_hall ./ sum(ad_contribs_to_far_hall)
-    covmat_prefactor = sum(normalized_ad_contribs_to_far_hall .^ 2)
-
-    observed = round.(Int, dfIBD_dict["dfIBD_EH3"].N)
-
-    # rescale predicted results bc we do not have a proper normalisation at the moment, make this a fit parameter later on
-    norm = sum(sum(Npred_EH3_nooscs)) / sum(sum(predicted_no_oscs))
-    for i in eachindex(predicted_no_oscs)
-        predicted_no_oscs[i] .*= norm
+    observed = []
+    for EH in EH_list
+        push!(observed, round.(Int, dfIBD_dict["dfIBD_EH$(EH)"].Nobs))
     end
+    # observed = 
+    #observed = round.(Int, dfIBD_dict["dfIBD_EH1"].N)
+    observed = reshape(stack(observed), 26*3) 
+    #for i in eachindex(predicted_no_oscs)
+    #    predicted_no_oscs[i] .*= norm
+    #end
 
 
 
     assets = (;
         E_arrs, 
         L_arrs, 
-        Npred_EH3_nooscs,
+        Npred_EH_nooscs,
+        Npred_EH_oscs,
         observed,
         energy_bins,
         period_list,
+        EH_list,
         energy_resolution,
         predicted_no_oscs,
         xsec_eval,     
@@ -252,37 +300,52 @@ function get_assets(physics; datadir = @__DIR__)
         E_prompt,   
         flux_weights_bar_osc,
         norm,
-        energy
+        energy,
+        dfBKG_dict,
+        dfIBD_dict,
+        baseline_av_best_fit_prob_arr,
+        bkg_templates,
+        bkg_EH
     )
 
 end
 
-
-function get_expected_per_period(params, period, physics, assets)
-    # insert the flux calculation, smearing here bc it depends on parameters
-    E_antinu_binc = assets.E_antinu_binc
-    E_prompt_binc = assets.E_prompt_binc
-    E_prompt = assets.E_prompt
-    energy_bins = assets.energy_bins
-    L = assets.L_arrs[period]
-    energy_resolution = assets.energy_resolution
+function get_expected_per_period(params, physics, L, flux_weight, E_antinu_binc, xsec_eval)
     prob_arr = physics.osc.osc_prob(E_antinu_binc, L, params, anti=true)[:, :, 1, 1]'
+    flux = physics.flux
     L2 = L .^ 2
-    flux_weight = assets.flux_weights_bar_osc[period]
     for i in eachindex(flux_weight)
         prob_arr[i, :] .*= flux_weight[i]
     end
     flux_weight_with_osc = vec(sum(prob_arr, dims=1))
-    xsec_eval = assets.xsec_eval
-    flux = physics.flux
-    pulls = params.pulls
     nom_flux = flux.nominal_flux.(E_antinu_binc)
-    sys_flux = [flux.sys_flux(e, pulls) for e in E_antinu_binc]
+    sys_flux = [flux.sys_flux(e, params.pulls) for e in E_antinu_binc]
     flux_eval = nom_flux .+ sys_flux
     # has arbitrary normalisation
-    p_ibd_weighted_flux = flux_eval .* xsec_eval .* flux_weight_with_osc
-    #println(size(p_ibd_weighted_flux))
-    smeared = energy_resolution * p_ibd_weighted_flux
+    return @. flux_eval * xsec_eval * flux_weight_with_osc
+end
+
+function get_expected_per_EH(params, EH, physics, assets)
+    E_antinu_binc = assets.E_antinu_binc
+    E_prompt_binc = assets.E_prompt_binc
+    E_prompt = assets.E_prompt
+    energy_bins = assets.energy_bins
+    periods = assets.period_list
+    energy_resolution = assets.energy_resolution
+    osc_prob = physics.osc.osc_prob
+    pulls = params.pulls
+    xsec_eval = assets.xsec_eval
+    p_ibd_weighted_flux = zeros(eltype(pulls), (length(periods), length(E_antinu_binc)))
+    L_arrs = assets.L_arrs[EH]
+    flux_weights = assets.flux_weights_bar_osc[EH]
+    for (c, period) in enumerate(periods)
+        
+        p_ibd_weighted_flux[c, :] = get_expected_per_period(
+            params, physics, L_arrs[c], flux_weights[c], E_antinu_binc, xsec_eval,
+        )
+        #println(size(p_ibd_weighted_flux))
+    end
+    smeared = energy_resolution * vec(sum(p_ibd_weighted_flux, dims=1))
     #println(size(smeared))
     idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
     result = zeros(eltype(pulls), size(energy_bins[1:end-1]))
@@ -291,12 +354,12 @@ function get_expected_per_period(params, period, physics, assets)
         result[c] = sum(smeared[idx .== c])
     end
 
-    result .* assets.norm
+    result .* assets.norm[EH] * params.norm
 end
 
-# Define function to give the expected events at the far hall (EH3)
+
 function get_expected(params, physics, assets)
-    sum([get_expected_per_period(params, period, physics, assets) for period in 1:length(assets.period_list)])
+    reshape(stack([get_expected_per_EH(params, EH, physics, assets) for EH in assets.EH_list]), 26 * 3)
 end
 
 function get_forward_model(physics, assets)
