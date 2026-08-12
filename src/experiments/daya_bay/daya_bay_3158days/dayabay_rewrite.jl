@@ -44,6 +44,7 @@ function get_params()
     return (
         norm=1.,
         per_EH_norm = zeros(3),
+        background_norm = ones(5),
     )
 end
 
@@ -52,13 +53,11 @@ function get_priors()
     exp = ones(5)
     cv = Diagonal(ones(5))
     priors = (
-        background_norm = Distributions.MvNormal(exp, cv),
-    )
-    #return priors
-    return (
+        background_norm = Distributions.Uniform.(0.5 .* ones(5), 1.5 .* ones(5)),
         norm = Distributions.Uniform(0.8, 1.5),
         per_EH_norm = Distributions.MvNormal(zeros(3), Diagonal(0.01 .* ones(3))),
     )
+    return priors
 end
 
 function get_assets(physics; datadir = @__DIR__)
@@ -200,6 +199,13 @@ function get_assets(physics; datadir = @__DIR__)
     # flux and ibd cross section
     flux = physics.flux.nominal_flux
     xsec = physics.xsec.xsec
+
+    isotope_ratio = (
+        U235 = 0.563452,
+        U238 = 0.07593,
+        Pu239 = 0.304785,
+        Pu241 = 0.055834
+    )
     
     flux_eval = flux.(E_antinu_binc)
     xsec_eval = xsec.(E_antinu_binc)
@@ -271,13 +277,13 @@ function get_assets(physics; datadir = @__DIR__)
     #calculate norm of forward-modelled counts at best fit osc params, 
     # sort of arbitrary but keeps the global anti-nu normalisation fit parameter close to 1
     end
-    norm = sum(sum(sum(Npred_EH_oscs))) / sum(sum(sum(predicted_oscs)))
+    norm = sum(sum(sum(Npred_EH_nooscs))) / sum(sum(sum(predicted_oscs)))
     #norm = sum(Npred_EH_oscs) / sum(predicted_oscs)
     #println(norm)
     
     observed = []
     for EH in EH_list
-        push!(observed, round.(Int, dfIBD_dict["dfIBD_EH$(EH)"].Npred))
+        push!(observed, round.(Int, dfIBD_dict["dfIBD_EH$(EH)"].Nobs))
     end
 
     # flatten so we may use dot syntax to evaluate the joint likelihood over all bins
@@ -313,6 +319,7 @@ function get_assets(physics; datadir = @__DIR__)
         bkg_EH,
         nom_flux,
         prompt_bin_idx,
+        isotope_ratio
     )
 
 end
@@ -345,7 +352,12 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
     osc_prob = physics.osc.osc_prob
     L_arrs = assets.L_arrs[EH]
     flux_weights = assets.flux_weights_bar_osc[EH]
+    nbins = length(out)
+    bkg_template = assets.bkg_EH[EH]
+    bkg_exp = zeros(eltype(params.norm), (nbins, 5))
     T = eltype(out)
+
+    bkg_norm = params.background_norm
 
     osc_weighted = zeros(T, length(E_antinu_binc))
     for c in eachindex(periods)
@@ -355,14 +367,19 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
 
     smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
 
-    idx   = assets.prompt_bin_idx
-    nbins = length(out)
+    idx = assets.prompt_bin_idx
     fill!(out, zero(T))
     @inbounds for k in eachindex(idx)
         c = idx[k]
         (1 <= c <= nbins) && (out[c] += smeared[k])
     end
+    @inbounds for k in eachindex(bkg_norm)
+        bkg_exp[:, k] .= bkg_template[:, k] .* bkg_norm[k] 
+    end
+
     out .*= params.norm * (1. + params.per_EH_norm[EH])
+    out .+= sum(bkg_exp, dims=2)[:]
+
     return out
 end
 
