@@ -8,6 +8,7 @@ using Integrals
 using CSV
 using DataFrames
 using Distributions
+using HDF5
 using ..Newtrinos
 
 export ReactorFluxConfig, HuberFlux, HuberSystematics, DayaBayFlux, DayaBaySystematics
@@ -25,12 +26,16 @@ abstract type FluxSystematicsModel end
 @kwdef struct ReactorFluxConfig{F<:NominalFluxModel, S<:FluxSystematicsModel}#, X:<Newtrinos.ibd_xsec.IBDXsec}
     nominal_model::F = DayaBayFlux()
     systematics_model::S = DayaBaySystematics()
-    isotope_ratio::NamedTuple = (U_235 = 0.61, Pu_239 = 0.33, Pu_241 = 0.06,)
+    isotope_ratio::NamedTuple = (
+        U_235 = 0.563452,
+        U_238 = 0.07593,
+        Pu_239 = 0.304785,
+        Pu_241 = 0.055834
+    )
 end
 
 
 struct HuberFlux <: NominalFluxModel
-    isotope_ratio::NamedTuple
 end
 
 struct HuberSystematics <: FluxSystematicsModel
@@ -75,27 +80,42 @@ function get_priors(cfg::HuberFlux)
 end
 
 
-function get_nominal_flux(cfg::HuberFlux)
-    isotope_ratio = cfg.isotope_ratio
-    U_235 = [4.367, -4.577, 2.100, -5.294e-1, 6.186e-2, -2.777e-3]
-    Pu_239 = [4.757, -5.392, 2.563, -6.596e-1, 7.820e-2, -3.536e-3]
-    Pu_241 = [2.990, -2.882, 1.278, -3.343e-1, 3.905e-2, -1.754e-3]
-    coeffs = (;U_235, Pu_239, Pu_241)
-    
-    function nominal_flux(E)
-        function single_flux(E, element)
-            coeff = coeffs[element]
-            exponent = sum([coeff[i] * E^(i-1) for i in eachindex(coeff)])
-            return exp(exponent)
-        end
-        isotope_weighted_flux = 0.
-        for (iso, weight) in pairs(isotope_ratio)
-            isotope_weighted_flux += weight * single_flux(E, iso)
-        end
-        return isotope_weighted_flux
 
+function get_nominal_flux(cfg::HuberFlux)
+    # read in the hdf5 here, create flux taking the isotopes fractions as mixture coefficients
+    path = "/home/iwsatlas1/kuhlmann/DEMOS/neutrinos/osc/dayabay_data/reactor_antineutrino_spectra_hm.hdf5"
+    h5 = h5open(path, "r")
+    E = [v.E_MeV for v in h5["Pu239"][:]]
+    Pu_239 = [v.N_density for v in h5["Pu239"][:]]
+    Pu_241 = [v.N_density for v in h5["Pu241"][:]]
+    U_235 = [v.N_density for v in h5["U235"][:]]
+    U_238 = [v.N_density for v in h5["U238"][:]]
+    close(h5)
+
+
+    f_239_interp = Interpolator(E, Pu_239)
+    Pu_239(E) = isnan(f_239_interp(E)) ? 0.0 : f_239_interp(E)
+
+    f_241_interp = Interpolator(E, Pu_241)
+    Pu_241(E) = isnan(f_241_interp(E)) ? 0.0 : f_241_interp(E)
+
+    f_238_interp = Interpolator(E, U_238)
+    U_238(E) = isnan(f_238_interp(E)) ? 0.0 : f_238_interp(E)
+
+    f_235_interp = Interpolator(E, U_235)
+    U_235(E) = isnan(f_235_interp(E)) ? 0.0 : f_235_interp(E)
+
+    names = (:U235, :U238, :Pu239, :Pu241)
+    funcs = [U_235, U_238, Pu_239, Pu_241]
+
+    fluxes = NamedTuple{names}(funcs)
+
+    function nominal_flux(E, isotopes::NamedTuple)
+        flux = sum([fluxes[iso](E) for (iso, weight) in pairs(isotopes)])
+        return flux
     end
-    nominal_flux
+
+    return nominal_flux
 end
 
 
@@ -145,8 +165,13 @@ function get_daya_bay_flux()
         push!(node_itp, func)
     end
     
-    isotope_ratio = (U_235 = 0.61, Pu_239 = 0.33, Pu_241 = 0.06,)
-    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(isotope_ratio), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
+    isotope_ratio = (
+        U235 = 0.563452,
+        U238 = 0.07593,
+        Pu239 = 0.304785,
+        Pu241 = 0.055834
+    )
+    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
     huber_flux = configure(huber_config)
     huber = huber_flux.nominal_flux
     
@@ -166,7 +191,7 @@ function get_daya_bay_flux()
     M = zeros(length(binc), length(binc))   # first index i, second index n
     for (i, (l, h)) in enumerate(zip(bin_edges[1:end-1], bin_edges[2:end]))
         for n in eachindex(binc)
-            func(E) = node_itp[n](E) * huber(E) * x_sec_itp(E)
+            func(E) = node_itp[n](E) * huber(E, isotope_ratio) * x_sec_itp(E)
             integrand(E, p) = func(E) > 0. ? func(E) : 0.
             prob = IntegralProblem(integrand, (l, h))
             sol = solve(prob, QuadGKJL())
@@ -184,31 +209,42 @@ function get_nominal_flux(cfg::DayaBayFlux)
     y_0 = nominal_flux.y_0
     y_nk = nominal_flux.y_nk
     node_itp = nominal_flux.node_itp
-    isotope_ratio = (U_235 = 0.61, Pu_239 = 0.33, Pu_241 = 0.06,)
-    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(isotope_ratio), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
+    isotope_ratio = (
+        U235 = 0.563452,
+        U238 = 0.07593,
+        Pu239 = 0.304785,
+        Pu241 = 0.055834
+    )
+    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
     flux = configure(huber_config)
     huber = flux.nominal_flux
     function nominal(E)
-        _huber = huber(E)
+        _huber = huber(E, isotope_ratio)
         phi_0 = sum([y_0[i] * node_itp[i](E) for i in eachindex(y_0)])
-        psi_k = sum([y_nk[n, :] * node_itp[n](E) for n in eachindex(y_0)])
+        #psi_k = sum([y_nk[n, :] * node_itp[n](E) for n in eachindex(y_0)])
         return _huber * phi_0
     end
     nominal
 end
 
 function get_sys_flux(cfg::DayaBaySystematics)
+    isotope_ratio = (
+        U235 = 0.563452,
+        U238 = 0.07593,
+        Pu239 = 0.304785,
+        Pu241 = 0.055834
+    )
     nominal_flux = get_daya_bay_flux()
     y_0 = nominal_flux.y_0
     y_nk = nominal_flux.y_nk
     node_itp = nominal_flux.node_itp
-    isotope_ratio = (U_235 = 0.61, Pu_239 = 0.33, Pu_241 = 0.06,)
-    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(isotope_ratio), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
+    huber_config = ReactorFluxConfig(nominal_model=HuberFlux(), systematics_model=HuberSystematics(), isotope_ratio=isotope_ratio)
     flux = configure(huber_config)
     huber = flux.nominal_flux
+
     
     function systematic(E, pulls)
-        _huber = huber(E)
+        _huber = huber(E, isotope_ratio)
         psi_k = sum([y_nk[n, :] .* node_itp[n](E) for n in eachindex(y_0)])
         return _huber * sum(pulls .* psi_k)
     end
