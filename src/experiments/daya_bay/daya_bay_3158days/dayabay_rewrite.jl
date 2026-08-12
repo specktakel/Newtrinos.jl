@@ -8,6 +8,8 @@ using CairoMakie
 using Accessors
 using Logging
 using BAT
+using HDF5
+using Interpolations
 import ..Newtrinos
 
 @kwdef struct DayaBay <: Newtrinos.Experiment
@@ -45,6 +47,9 @@ function get_params()
         norm=1.,
         per_EH_norm = zeros(3),
         background_norm = ones(5),
+        eres_a = 0.016,
+        eres_b = 0.081,
+        eres_c = 0.026,
     )
 end
 
@@ -56,6 +61,9 @@ function get_priors()
         background_norm = Distributions.Uniform.(0.5 .* ones(5), 1.5 .* ones(5)),
         norm = Distributions.Uniform(0.8, 1.5),
         per_EH_norm = Distributions.MvNormal(zeros(3), Diagonal(0.01 .* ones(3))),
+        eres_a = Distributions.Normal(0.016, 0.016 * 0.3),   # 30 percent relative uncertainty
+        eres_b = Distributions.Normal(0.081, 0.081 * 0.3),
+        eres_c = Distributions.Normal(0.026, 0.026 * 0.3),
     )
     return priors
 end
@@ -115,6 +123,7 @@ function get_assets(physics; datadir = @__DIR__)
 
     # Tell me, do we really need this?
     bkg_types = ["Nacc", "Nalphan", "Namc", "Nlihe", "Nfastn"]
+    # Tell me, do we really care?
     
     # Parse IBD and background files
     for EH in EH_list
@@ -154,6 +163,16 @@ function get_assets(physics; datadir = @__DIR__)
         end
         bkg_EH[EH] = sum(bkg, dims=1)[1]
     end
+
+
+    # energy nonlinearity, nominal
+    f = h5open("/home/iwsatlas1/kuhlmann/DEMOS/neutrinos/osc/dayabay_data/detector_lsnl_curves.hdf5")
+    nominal = read(f["nominal"])
+    close(f)
+    E = [n.E_MeV for n in nominal]
+    lnsl = [n.f for n in nominal]
+    nonlinearity = linear_interpolation(E, lnsl, extrapolation_bc=Line())
+
 
     energy_bins = copy(dfBKG_dict["dfBKG_Six_EH3"].Emin)
     energy = copy(dfBKG_dict["dfBKG_Six_EH3"].Ec)
@@ -291,7 +310,13 @@ function get_assets(physics; datadir = @__DIR__)
 
 
     nom_flux = physics.flux.nominal_flux.(E_antinu_binc) * norm
-    prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
+
+    E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
+    E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
+    # TODO:later check if less bins are sufficient
+    E_prompt_reco = E_positron .* nonlinearity.(E_positron)
+    E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
+    prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_reco_edges)
 
     assets = (;
         E_arrs, 
@@ -319,9 +344,20 @@ function get_assets(physics; datadir = @__DIR__)
         bkg_EH,
         nom_flux,
         prompt_bin_idx,
-        isotope_ratio
+        isotope_ratio,
+        nonlinearity
     )
 
+end
+
+function energy_resolution(E, E_edges, eres_a, eres_b, eres_c)
+    eres_prompt = @. sqrt(E^2 * eres_a^2 + eres_b^2 * E + eres_c^2)
+    resolutions = Distributions.Normal.(E, eres_prompt)
+    out = zeros(eltype(eres_a), (length(E), length(E)))
+    for (c, (El, Eh)) in enumerate(zip(E_edges[1:end-1], E_edges[2:end]))
+        out[c, :] = Distributions.cdf.(resolutions, Eh) - Distributions.cdf.(resolutions, El)
+    end
+    return out
 end
 
 function get_expected!(out, params, physics, assets)
@@ -346,8 +382,12 @@ function get_expected(params, physics, assets)
     get_expected!(out, params, physics, assets)
 end
 
+
 function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
     E_antinu_binc = assets.E_antinu_binc
+    E_antinu = assets.E_antinu
+    E_prompt_binc = assets.E_prompt_binc
+    E_prompt_edges = assets.E_prompt
     periods = assets.period_list
     osc_prob = physics.osc.osc_prob
     L_arrs = assets.L_arrs[EH]
@@ -356,6 +396,7 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
     bkg_template = assets.bkg_EH[EH]
     bkg_exp = zeros(eltype(params.norm), (nbins, 5))
     T = eltype(out)
+    nonlinearity = assets.nonlinearity
 
     bkg_norm = params.background_norm
 
@@ -365,8 +406,27 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
         mul!(osc_weighted, S, flux_weights[c], 1, 1)
     end
 
-    smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
+    # smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
+    eres_a = params.eres_a
+    eres_b = params.eres_b
+    eres_c = params.eres_c
 
+    # directly evaluate at vector of prompt energy?
+
+    
+    E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
+    E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
+    # TODO:later check if less bins are sufficient
+    E_prompt_reco = E_positron .* nonlinearity.(E_positron)
+    E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
+    
+    eres = energy_resolution(E_prompt_reco, E_prompt_reco_edges, eres_a, eres_b, eres_c)
+
+    smeared = eres * (flux_xsec .* osc_weighted)
+
+    # if the nonlinearity becomes properly parameterised this has to be redone every loop
+    # or we switch to backwards computing from the fixed binning in prompt ereco
+    # the actual eprompt of the positron and then the neutrino energy
     idx = assets.prompt_bin_idx
     fill!(out, zero(T))
     @inbounds for k in eachindex(idx)
