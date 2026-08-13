@@ -11,6 +11,7 @@ using BAT
 using HDF5
 using Interpolations
 using SpecialFunctions: erfc
+using SparseArrays
 import ..Newtrinos
 
 @kwdef struct DayaBay <: Newtrinos.Experiment
@@ -59,7 +60,7 @@ function get_priors()
     exp = ones(5)
     cv = Diagonal(ones(5))
     priors = (
-        background_norm = Distributions.Uniform.(0. .* ones(5), 2.0 .* ones(5)),
+        background_norm = Distributions.Uniform.(0.5 .* ones(5), 2.0 .* ones(5)),
         norm = Distributions.Uniform(0.8, 1.5),
         per_EH_norm = Distributions.MvNormal(zeros(3), Diagonal(0.01 .* ones(3))),
         eres_a = Distributions.Normal(0.016, 0.016 * 0.3),   # 30 percent relative uncertainty
@@ -358,16 +359,42 @@ function get_assets(physics; datadir = @__DIR__)
 
 end
 
-function energy_resolution(E, E_edges, eres_a, eres_b, eres_c)
-    eres_prompt = @. sqrt(E^2 * eres_a^2 + eres_b^2 * E + eres_c^2)
-    resolutions = truncated.(Distributions.Normal.(E, eres_prompt), E_edges[1], E_edges[end])
-    out = zeros(eltype(eres_a), (length(E), length(E)))
-    for (c, (El, Eh)) in enumerate(zip(E_edges[1:end-1], E_edges[2:end]))
-    #for (c, Ec) in enumerate(E)
-        out[c, :] = Distributions.cdf.(resolutions, Eh) - Distributions.cdf.(resolutions, El)
-        # out[c, :] = Distributions.pdf.(resolutions, Ec)
+
+function energy_resolution(E, E_edges, eres_a, eres_b, eres_c; nσ = 6)
+    N  = length(E)
+    ne = length(E_edges)                 # ne == N + 1 for a square smearing matrix
+    T  = promote_type(eltype(E), eltype(eres_a))
+    c1 = T(1) / sqrt(T(2))
+
+    Φ = Vector{T}(undef, ne)             # edge CDFs, reused per column
+    I = Int[]; J = Int[]; V = T[]
+    sizehint!(V, N * 4 * nσ); sizehint!(I, N * 4 * nσ); sizehint!(J, N * 4 * nσ)
+
+    @inbounds for j in 1:N
+        Ej   = E[j]
+        σ    = sqrt(Ej^2 * eres_a^2 + eres_b^2 * Ej + eres_c^2)
+        invσ = 1 / σ
+
+        # edge window within ±nσ of Ej, clamped to the full range.
+        # search on values only — the window boundary is a step (zero-gradient)
+        # device; the tail mass it drops is ~1e-9, well below fp gradient noise.
+        lo  = Ej - nσ * σ
+        hi  = Ej + nσ * σ
+        klo = clamp(searchsortedlast(E_edges, lo),  1,       ne - 1)
+        khi = clamp(searchsortedfirst(E_edges, hi), klo + 1, ne)
+
+        for k in klo:khi
+            z = (E_edges[k] - Ej) * invσ
+            Φ[k] = T(0.5) * erfc(-z * c1)            # = Φ(z), one erfc per edge
+        end
+
+        invZ = 1 / (Φ[khi] - Φ[klo])                 # truncate to the window
+        for c in klo:(khi - 1)
+            push!(I, c); push!(J, j); push!(V, (Φ[c+1] - Φ[c]) * invZ)
+        end
     end
-    return out
+
+    return sparse(I, J, V, N, N)
 end
 
 function get_expected!(out, params, physics, assets)
@@ -378,10 +405,30 @@ function get_expected!(out, params, physics, assets)
     sys_flux  = [physics.flux.sys_flux(e, pulls) for e in E_antinu_binc]
     flux_xsec = @. (assets.nom_flux + sys_flux) * assets.xsec_eval
 
+    # smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
+    eres_a = params.eres_a
+    eres_b = params.eres_b
+    eres_c = params.eres_c
+
+    # directly evaluate at vector of prompt energy?
+
+    
+    #E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
+    #E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
+    ## TODO:later check if less bins are sufficient
+    #E_prompt_reco = E_positron .* nonlinearity.(E_positron)
+    #E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
+    E_prompt_reco_binc = assets.E_prompt_reco_binc
+    E_prompt_reco_edges = assets.E_prompt_reco_edges
+    
+
+    eres = energy_resolution(E_prompt_reco_binc, E_prompt_reco_edges, eres_a, eres_b, eres_c)
+
+
     nbins = length(assets.energy_bins) - 1
     for (i, EH) in enumerate(assets.EH_list)
         seg = @view out[(i-1)*nbins+1 : i*nbins]
-        get_expected_per_EH!(seg, params, EH, physics, assets, flux_xsec)
+        get_expected_per_EH!(seg, params, EH, physics, assets, flux_xsec, eres)
     end
     return out
 end
@@ -393,7 +440,7 @@ function get_expected(params, physics, assets)
 end
 
 
-function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
+function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec, eres)
     E_antinu_binc = assets.E_antinu_binc
     E_antinu = assets.E_antinu
     E_prompt_binc = assets.E_prompt_binc
@@ -416,23 +463,7 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
         mul!(osc_weighted, S, flux_weights[c], 1, 1)
     end
 
-    # smeared = assets.energy_resolution * (flux_xsec .* osc_weighted)
-    eres_a = params.eres_a
-    eres_b = params.eres_b
-    eres_c = params.eres_c
-
-    # directly evaluate at vector of prompt energy?
-
     
-    #E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
-    #E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
-    ## TODO:later check if less bins are sufficient
-    #E_prompt_reco = E_positron .* nonlinearity.(E_positron)
-    #E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
-    E_prompt_reco_binc = assets.E_prompt_reco_binc
-    E_prompt_reco_edges = assets.E_prompt_reco_edges
-    
-    eres = energy_resolution(E_prompt_reco_binc, E_prompt_reco_edges, eres_a, eres_b, eres_c)
 
     smeared = eres * (flux_xsec .* osc_weighted)
 
