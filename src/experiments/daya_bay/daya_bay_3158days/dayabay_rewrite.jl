@@ -10,6 +10,7 @@ using Logging
 using BAT
 using HDF5
 using Interpolations
+using SpecialFunctions: erfc
 import ..Newtrinos
 
 @kwdef struct DayaBay <: Newtrinos.Experiment
@@ -58,7 +59,7 @@ function get_priors()
     exp = ones(5)
     cv = Diagonal(ones(5))
     priors = (
-        background_norm = Distributions.Uniform.(0.5 .* ones(5), 1.5 .* ones(5)),
+        background_norm = Distributions.Uniform.(0. .* ones(5), 2.0 .* ones(5)),
         norm = Distributions.Uniform(0.8, 1.5),
         per_EH_norm = Distributions.MvNormal(zeros(3), Diagonal(0.01 .* ones(3))),
         eres_a = Distributions.Normal(0.016, 0.016 * 0.3),   # 30 percent relative uncertainty
@@ -203,8 +204,10 @@ function get_assets(physics; datadir = @__DIR__)
             res[c, :] .= res[c, :] ./ sum(v)
         end
     end
+
+    res = transpose(res)
     
-    energy_resolution = transpose(res)
+    #energy_resolution = transpose(res)
     
     #bin edges
     E_antinu = Vector(range(1, 13; step=0.01))
@@ -240,6 +243,15 @@ function get_assets(physics; datadir = @__DIR__)
     Npred_EH_oscs = Vector{Vector{Vector{Float64}}}()
 
     efficiency = Vector{Vector{Vector{Float64}}}()
+
+    nom_flux = physics.flux.nominal_flux.(E_antinu_binc)
+
+    E_positron_binc = E_antinu_binc .- 0.782   # Enu to Epositron
+    E_positron_edges = E_antinu .- 0.782  # repeat everything for bin edges, 
+    # TODO:later check if less bins are sufficient
+    E_prompt_reco_binc = E_positron_binc .* nonlinearity.(E_positron_binc)
+    E_prompt_reco_edges = E_positron_edges .* nonlinearity(E_positron_edges)
+    prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_reco_binc)
 
     for EH in EH_list
         E_arr = dfIBD_dict["dfIBD_EH$(EH)"].Ec .+ 0.78
@@ -282,13 +294,14 @@ function get_assets(physics; datadir = @__DIR__)
             # dimensions: period x (#AD x reactor).flatten latter two stem from L_arr
             flux_weight_bar_osc = lifetime["$period-AD Period"] * efficiency .* target_mass ./ L_arr.^2
             flux_weight_w_osc = flux_weight_bar_osc .* best_fit_prob_arr
-            smeared = energy_resolution * (ibd_weighted_flux .* sum(flux_weight_bar_osc))
+            #smeared = energy_resolution * (ibd_weighted_flux .* sum(flux_weight_bar_osc))
+            smeared = energy_resolution(E_prompt_reco_binc, E_prompt_reco_edges, 0.016, 0.081, 0.026) * (ibd_weighted_flux .* sum(flux_weight_bar_osc))
             push!(flux_weights_bar_osc[end], flux_weight_bar_osc)
-            idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
+            #idx = searchsortedlast.(Ref(energy_bins), E_prompt_binc)
             result = zeros(length(energy_bins[1:end-1]))
             # integrate by summing over Eprompt in the bins of Dayabay
             for c in eachindex(energy_bins[1:end-1])
-                result[c] = sum(smeared[idx .== c])
+                result[c] = sum(smeared[prompt_bin_idx .== c])
             end
 
             push!(predicted_oscs[end], result)
@@ -299,6 +312,8 @@ function get_assets(physics; datadir = @__DIR__)
     norm = sum(sum(sum(Npred_EH_nooscs))) / sum(sum(sum(predicted_oscs)))
     #norm = sum(Npred_EH_oscs) / sum(predicted_oscs)
     #println(norm)
+
+    nom_flux .*= norm
     
     observed = []
     for EH in EH_list
@@ -308,15 +323,6 @@ function get_assets(physics; datadir = @__DIR__)
     # flatten so we may use dot syntax to evaluate the joint likelihood over all bins
     observed = reshape(stack(observed), Int((length(energy_bins) - 1) * length(EH_list)))
 
-
-    nom_flux = physics.flux.nominal_flux.(E_antinu_binc) * norm
-
-    E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
-    E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
-    # TODO:later check if less bins are sufficient
-    E_prompt_reco = E_positron .* nonlinearity.(E_positron)
-    E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
-    prompt_bin_idx = searchsortedlast.(Ref(energy_bins), E_prompt_reco_edges)
 
     assets = (;
         E_arrs, 
@@ -345,17 +351,21 @@ function get_assets(physics; datadir = @__DIR__)
         nom_flux,
         prompt_bin_idx,
         isotope_ratio,
-        nonlinearity
+        nonlinearity,
+        E_prompt_reco_edges,
+        E_prompt_reco_binc,
     )
 
 end
 
 function energy_resolution(E, E_edges, eres_a, eres_b, eres_c)
     eres_prompt = @. sqrt(E^2 * eres_a^2 + eres_b^2 * E + eres_c^2)
-    resolutions = Distributions.Normal.(E, eres_prompt)
+    resolutions = truncated.(Distributions.Normal.(E, eres_prompt), E_edges[1], E_edges[end])
     out = zeros(eltype(eres_a), (length(E), length(E)))
     for (c, (El, Eh)) in enumerate(zip(E_edges[1:end-1], E_edges[2:end]))
+    #for (c, Ec) in enumerate(E)
         out[c, :] = Distributions.cdf.(resolutions, Eh) - Distributions.cdf.(resolutions, El)
+        # out[c, :] = Distributions.pdf.(resolutions, Ec)
     end
     return out
 end
@@ -414,13 +424,15 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
     # directly evaluate at vector of prompt energy?
 
     
-    E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
-    E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
-    # TODO:later check if less bins are sufficient
-    E_prompt_reco = E_positron .* nonlinearity.(E_positron)
-    E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
+    #E_positron = E_antinu_binc .- 0.782   # Enu to Epositron
+    #E_prompt = E_antinu .- 0.782  # repeat everything for bin edges, 
+    ## TODO:later check if less bins are sufficient
+    #E_prompt_reco = E_positron .* nonlinearity.(E_positron)
+    #E_prompt_reco_edges = E_prompt .* nonlinearity(E_prompt)
+    E_prompt_reco_binc = assets.E_prompt_reco_binc
+    E_prompt_reco_edges = assets.E_prompt_reco_edges
     
-    eres = energy_resolution(E_prompt_reco, E_prompt_reco_edges, eres_a, eres_b, eres_c)
+    eres = energy_resolution(E_prompt_reco_binc, E_prompt_reco_edges, eres_a, eres_b, eres_c)
 
     smeared = eres * (flux_xsec .* osc_weighted)
 
@@ -443,54 +455,6 @@ function get_expected_per_EH!(out, params, EH, physics, assets, flux_xsec)
     return out
 end
 
-"""
-function get_expected_per_EH(params, EH, physics, assets)
-    E_antinu_binc = assets.E_antinu_binc
-    E_prompt_binc = assets.E_prompt_binc
-    E_prompt = assets.E_prompt
-    energy_bins = assets.energy_bins
-    periods = assets.period_list
-    energy_resolution = assets.energy_resolution
-    osc_prob = physics.osc.osc_prob
-    pulls = params.pulls
-    T = eltype(pulls)
-    xsec_eval = assets.xsec_eval
-    p_ibd_weighted_flux = zeros(T, (length(periods), length(E_antinu_binc)))
-    L_arrs = assets.L_arrs[EH]
-    flux_weights = assets.flux_weights_bar_osc[EH]
-    flux = physics.flux
-    nom_flux = assets.nom_flux
-
-    sys_flux  = [flux.sys_flux(e, pulls) for e in E_antinu_binc]
-    flux_eval = assets.nom_flux .+ sys_flux
-
-    osc_weighted = zeros(T, length(E_antinu_binc))
-    for c in eachindex(periods)
-        S = @view osc_prob(E_antinu_binc, L_arrs[c], params, anti=true)[:, :, 1, 1]
-        mul!(osc_weighted, S, flux_weights[c], 1, 1)   # osc_weighted += S * w
-    end
-    weighted  = @. flux_eval * assets.xsec_eval * osc_weighted
-
-    smeared = assets.energy_resolution * weighted
-    #println(size(smeared))
-    idx    = assets.prompt_bin_idx
-    nbins  = length(assets.energy_bins) - 1
-    result = zeros(T, nbins)
-    @inbounds for k in eachindex(idx)
-        c = idx[k]
-        (1 <= c <= nbins) && (result[c] += smeared[k])
-    end
-
-    result .*= assets.norm[EH] * params.norm
-
-    return result
-end
-
-
-function get_expected(params, physics, assets)
-    reshape(stack([get_expected_per_EH(params, EH, physics, assets) for EH in assets.EH_list]), 26 * 3)
-end
-"""
 
 function get_forward_model(physics, assets)
     function forward_model(params)
