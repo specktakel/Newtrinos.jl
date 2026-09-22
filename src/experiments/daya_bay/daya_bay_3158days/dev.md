@@ -42,32 +42,6 @@ using Newtrinos
 ```
 
 ```julia
-str = "AD31"
-str[3]
-```
-
-```julia
-detector_list = []
-
-function AD_to_EH(AD::String)
-    return parse(Int, AD[3])
-end
-
-
-for p in period_list
-    for AD in detector_dict[p]
-        push!(detector_list, "$(p)$(AD)")
-    end
-end
-
-detector_list
-```
-
-```julia
-idx = findall(x-> x=="6ADAD12", detector_list)[1]
-```
-
-```julia
 # make some global list of the detectors used in all the periods
 
 dict = YAML.load_file("dayabay_data/parameters/background_rates_uncorrelated.yaml", dicttype=OrderedDict{String,Any})
@@ -96,6 +70,21 @@ for p in period_list
         push!(period_EH_list, "$(p)_$(EH)")
     end
 end
+
+detector_list = []
+
+function AD_to_EH(AD::String)
+    return parse(Int, AD[3])
+end
+
+
+for p in period_list
+    for AD in detector_dict[p]
+        push!(detector_list, "$(p)$(AD)")
+    end
+end
+
+
 
 
 function get_effective_livetime(period::Int)
@@ -202,19 +191,19 @@ function get_iav_matrix()
 
     iav = file["iav_matrix"][]    # sums in dim=2 to 1
     close(file)
-    iav
+    transpose(iav)   # multiply with vector of spectrum from r.h.s. -> smeared spectrum
 end
 
-function get_lnsl_correction()
+function get_lsnl_correction()
     # gives ratio of visible/true energy, hence multiply true energy to go to visible
     file = h5open("dayabay_data/detector_lsnl_curves.hdf5")
 
-    f_nom = []
+    f_nom = Float64[]
     pull0 = []
     pull1 = []
     pull2 = []
     pull3 = []
-    E = []
+    E = Float64[]
     E0 = []
     E1 = []
     E2 = []
@@ -237,7 +226,7 @@ function get_lnsl_correction()
     @assert all(isapprox.(E1, E2))
     @assert all(isapprox.(E2, E3))
 
-    return (;E, rel_0, rel_1, rel_2, rel_3)
+    return (;E, f_nom, rel_0, rel_1, rel_2, rel_3)
 
 end
 
@@ -349,6 +338,24 @@ function get_priors()
     lsnl_pull = Distributions.MvNormal(lsnl_scale_nom .* ones(4), lsnl_scale_unc^2 .* ones(4))
 
 
+
+
+
+    #### reactor stuff
+
+    ## energy per fission
+    file = YAML.load_file("dayabay_data/parameters/reactor_energy_per_fission.yaml")
+    data = file["parameters"]["energy_per_fission"]
+
+    energy_per_fission_U235 = Distributions.Normal(mu=data["U235"][1], sigma=data["U235"][1])
+    energy_per_fission_U238 = Distributions.Normal(mu=data["U238"][1], sigma=data["U238"][1])
+    energy_per_fission_Pu239 = Distributions.Normal(mu=data["Pu239"][1], sigma=data["Pu239"][1])
+    energy_per_fission_Pu241 = Distributions.Normal(mu=data["Pu241"][1], sigma=data["Pu241"][1])
+
+
+    
+
+
     priors = (
         amc_unc_scale=amc_unc_scale,  # done
         acc_scale=acc_scale,   # done
@@ -366,7 +373,11 @@ function get_priors()
         eff_eres_AD32=eff_eres_AD32,
         eff_eres_AD33=eff_eres_AD33,
         eff_eres_AD34=eff_eres_AD34,
-        iav_offdiag_scale=iav_offdiag_scale   # done
+        iav_offdiag_scale=iav_offdiag_scale,   # done
+        energy_per_fission_U235=energy_per_fission_U235,
+        energy_per_fission_U238=energy_per_fission_U238,
+        energy_per_fission_Pu239=energy_per_fission_Pu239,
+        energy_per_fission_Pu241=energy_per_fission_Pu241,
     )
 end
 
@@ -377,21 +388,13 @@ function get_params()
     acc_scale_nom = dict["parameters"]["accidentals"][1]  # blow up to vector over all ADs
 
     len = length(detectors_6AD) + length(detectors_8AD) + length(detectors_7AD)
-    acc_scale = acc_scale_nom .*ones(len)
+    acc_scale = acc_scale_nom .* ones(len)
 
 
     ## amc
     dict = YAML.load_file("dayabay_data/parameters/background_rate_uncertainty_scale_amc.yaml")
 
-    amc_scale_nom = dict["parameters"]["amc"][1]
-
-    amc_unc_scale = amc_scale_nom
-    #TODO : possibly solve this by HierarchicalDistributions
-    #hd = HierarchicalDistribution(
-    #    v -> BAT.NamedTupleDist(rate=Distributions.Normal(0.277, 0.11 * v.scale)),
-    #    BAT.NamedTupleDist(scale=Normal(0.0, 1.0))
-    #)
-    #amc_rate = 
+    amc_unc_scale = dict["parameters"]["amc"][1]
 
 
     ## site correlated
@@ -482,17 +485,121 @@ function get_params()
     return params
 end
 
-function get_assets()
+
+function eres(E, a, b, c)
+    sigma_E = @. sqrt(a^2 * E^2 + b^2 * E + c^2)
 end
 
-    
+function smear(E_arr_smear_local, smear_arr_in, sigma_arr; width=10, E_scale=1.0, E_bias=0.0)
 
-function extract_energy_resolution()
+    l = length(smear_arr_in)
+    T_acc = promote_type(eltype(E_arr_smear_local), eltype(sigma_arr), eltype(smear_arr_in), typeof(E_scale))
+    out = zeros(T_acc, l)
+
+    for i in 1:l
+
+        e_center = E_arr_smear_local[i] * E_scale + E_bias
+
+        norm_val = zero(T_acc)
+        sum_val = zero(T_acc)
+
+        j_min_loop = max(1, i - width)
+        j_max_loop = min(l, i + width)
+
+        for j in j_min_loop:j_max_loop
+            coeff = (1 / sigma_arr[j]) * exp(-0.5 * ((e_center - E_arr_smear_local[j]) / sigma_arr[j])^2)
+            norm_val += coeff
+            sum_val += coeff * smear_arr_in[j]
+        end
+
+        if norm_val > 1e-10
+            out[i] = sum_val / norm_val
+        end
+
+    end
+    return out
+end
+
+
+function extract_spectra()
+    file = h5open("dayabay_data/reactor_antineutrino_spectra_hm.hdf5")
+    spec_Pu239 = Float64[]
+    spec_Pu241 = Float64[]
+    spec_U235 = Float64[]
+    spec_U238 = Float64[]
+    E = Float64[]
+    foreach(x -> (push!(spec_Pu239, x[2]), push!(E, x[1])), file["Pu239"][1:end])
+    foreach(x -> push!(spec_Pu241, x[2]), file["Pu241"][1:end])
+    foreach(x -> push!(spec_U235, x[2]), file["U235"][1:end])
+    foreach(x -> push!(spec_U238, x[2]), file["U238"][1:end])
+
+    return (Pu239=spec_Pu239, Pu241=spec_Pu241, U238=spec_U238, U235=spec_U235, E=E)
+end
+
+
+function get_reactor_flux()
+
+    # get fission fractions for fixed weighting
+    fractions = YAML.load_file("dayabay_data/parameters/reactor_fission_fractions.yaml")["parameters"]["fission_fractions"]
+
+    fractions = NamedTuple((Symbol(key),value) for (key,value) in fractions)
+
+    fluxes = extract_spectra()
+    E = fluxes.E
+
+    f_239_interp = Interpolator(E, fluxes.Pu239)
+    Pu_239(E) = isnan(f_239_interp(E)) ? 0.0 : f_239_interp(E)
+
+    f_241_interp = Interpolator(E, fluxes.Pu241)
+    Pu_241(E) = isnan(f_241_interp(E)) ? 0.0 : f_241_interp(E)
+
+    f_238_interp = Interpolator(E, fluxes.U238)
+    U_238(E) = isnan(f_238_interp(E)) ? 0.0 : f_238_interp(E)
+
+    f_235_interp = Interpolator(E, fluxes.U235)
+    U_235(E) = isnan(f_235_interp(E)) ? 0.0 : f_235_interp(E)
+
+    names = (:U235, :U238, :Pu239, :Pu241)
+    funcs = [U_235, U_238, Pu_239, Pu_241]
+
+    fluxes = NamedTuple{names}(funcs)
+
+    function reactor_flux(E)
+        flux = sum([fluxes[iso].(E) for (iso, weight) in pairs(fractions)])
+    end
+
+    reactor_flux
+
+end
+
+function lsnl_correction()
+    lsnl = get_lsnl_correction()
+    interp = Interpolator(lsnl.E, lsnl.f_nom)
+
+    func(E) = isnan(interp(E)) ? 0.0 : interp(E)
 end
 
 ```
 
 ```julia
+reactor_flux = get_reactor_flux()
+xsec_config = Newtrinos.ibd_xsec.configure()
+xsec = xsec_config.xsec
+xsec_weighted_spectrum(E) = @. xsec(E) * reactor_flux(E)
+iav = get_iav_matrix();
+
+lsnl = lsnl_correction()
+
+data_basepath = "dayabay_data/parameters"
+
+final_binning = readdlm(joinpath(data_basepath, "final_erec_bin_edges.tsv"))[2:end];
+```
+
+```julia
+## this should become `get_assets` eventually
+
+# need to get rebinned counts for each AD in each period for statistical analysis, i.e. 6 + 8 + 7 histograms with n bins each
+
 #effective livetime = livetime * efficiency, in days. multiply with rates [days-1] to get counts
 params = get_params()
 
@@ -511,6 +618,9 @@ lihe = bg_dict["lithium_helium"]
 fast_n = bg_dict["fast_neutrons"]
 alpha_n = bg_dict["alpha_neutron"]
 
+
+
+# part of forward model
 acc_counts = eff_livetime * accidentals.rate * params.acc_scale[idx] .* accidentals.shape 
 
 amc_counts = eff_livetime * amc.rate * (1 + amc.uncertainty * params.amc_unc_scale) .* amc.shape
@@ -520,117 +630,71 @@ lihe_counts = eff_livetime * lihe.rate * (1 + lihe.uncertainty * params.lihe_unc
 
 fast_n_counts = eff_livetime * fast_n.rate * (1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]) .* fast_n.shape
 
-alpha_n_counts = eff_livetime * alpha_n.rate .* alpha_n.shape
+alpha_n_counts = eff_livetime * alpha_n.rate .* alpha_n.shape;
 
-```
+E_c = output.E_center_MeV;
+E_bin_edges = output.E_bins_MeV;
 
-```julia
-sum(alpha_n_counts)
-```
+#iav, lsnl etc. is provided in electron prompt energy, hence we need to convert it to neutrino energy to for evaluation of spectrum and ibd cross section
+E_nu_c = E_c .+ 0.782
+E_nu_bin_edges = E_bin_edges .+ 0.782
 
-```julia
-eff_livetime = output.eff_livetime
-rates = Dict()
-for (k, v) in output.bg_dict
-    rates[k] = v.rate
-end
-rates
 
-```
+# evaluate spectrum x x-sec at E_c
+spec_ibd = xsec_weighted_spectrum(E_nu_c)
 
-```julia
-eff_livetime / 60 / 60 / 24
-```
+iav_smeared_spec = iav * spec_ibd
+E_vis_c = @. lsnl(E_c) * E_c;
 
-```julia
-data_basepath = "dayabay_data/dayabay_dataset"
-period = 6
-daily_path = joinpath(data_basepath, "dayabay_daily_detector_data.hdf5")
-eff_livetime_per_AD = []
-data = h5open(daily_path)
-for AD in detectors_6AD
-    eff_livetime = []
-    foreach(x -> x[:n_det] == period ? push!(eff_livetime, x[:eff_livetime]) : 0, data["AD$(AD[3:end])"][1:end])
-    push!(eff_livetime_per_AD, sum(eff_livetime))
+sigma_eres = eres(E_vis_c, params.eres_a, params.eres_b, params.eres_c);
+
+smeared_signal = smear(E_vis_c, iav_smeared_spec, sigma_eres);
+
+#binning by just checking if an energy falls into the specific analysis bin
+rebin_idx = searchsortedlast.(Ref(final_binning), E_vis_c)
+
+exp_idx = searchsortedlast.(Ref(final_binning), output.E_center_MeV)
+
+signal_rebinned = []
+exp_rebinned = []
+for i in 1:(length(final_binning)-1)
+    push!(signal_rebinned, sum(smeared_signal[rebin_idx.==i]) / sum(rebin_idx.==i))
+    push!(exp_rebinned, sum(output.counts_ibd[exp_idx.==i]) / sum(exp_idx.==i))
 end
 
-
+final_bin_c = (final_binning[1:end-1] + final_binning[2:end]) / 2
 ```
 
 ```julia
-eff_livetime_per_AD
+scale = sum(exp_rebinned) / sum(signal_rebinned)
 ```
 
 ```julia
-datasets = HDF5.get_datasets(data)
+f = Figure()
+ax = Axis(f[1, 1])
 
-datasets[1][1][:n_det]
+plot!(final_bin_c, scale .* signal_rebinned)
+plot!(final_bin_c, exp_rebinned)
+
+f
 ```
 
 ```julia
-dict = YAML.load_file("dayabay_data/parameters/background_rates_uncorrelated.yaml", dicttype=OrderedDict{String,Any})
+f = Figure()
+ax = Axis(f[1, 1])
 
-for k in keys
-    println(dict["parameters"]["alpha_neutron"][k])
-    break
-end
+scatter!(output.E_center_MeV, background_counts)
 
-keys = ["6AD", "8AD", "7AD"]
+scatter!(output.E_center_MeV, output.counts_ibd)
 
-detectors_6AD = []
-detectors_8AD = []
-detectors_7AD = []
-
-alpha_n_nom = []
-alpha_n_unc = []
-
-for k in keys
-    an = dict["parameters"]["alpha_neutron"][k]
-    for (k, v) in an
-        push!(alpha_n_nom, v[1])
-        push!(alpha_n_unc, v[2])
-    end
-
-    
-end
-for (k, v) in dict["parameters"]["alpha_neutron"]["6AD"]
-    push!(detectors_6AD, k)
-end
-for (k, v) in dict["parameters"]["alpha_neutron"]["8AD"]
-    push!(detectors_8AD, k)
-end
-for (k, v) in dict["parameters"]["alpha_neutron"]["7AD"]
-    push!(detectors_7AD, k)
-end
-
+f
 ```
 
 ```julia
-alpha_n_nom
-```
-
-```julia
-output = extract_for_AD_period(11, 8)
-```
-
-```julia
-
-```
-
-```julia
-
-```
-
-```julia
-
-```
-
-```julia
-output.bg_dict["accidentals"].counts
-```
-
-```julia
-dict["parameters"]["accidentals"]
+#reactor thermal power -> anti nu normalisation:
+# assume anti nu spectrum is norm * pdf(E) with [norm] = anti-nu / s
+# norm = P_reactor * anti-nu / fission / (energy / fission), units match, also makes sense:
+# should scale linearly with nu / fission and inverse with energy / fission (i.e. less fissions needed for same energy output)
 ```
 
 <!-- #region -->
@@ -676,50 +740,6 @@ output = extract_for_AD_period(11, 6)
 ```
 
 ```julia
-file = h5open("dayabay_data/detector_lsnl_curves.hdf5")
-file
-
-#E = []
-f_nom = []
-pull0 = []
-pull1 = []
-pull2 = []
-pull3 = []
-Enom = []
-E0 = []
-E1 = []
-E2 = []
-E3 = []
-foreach(x -> (push!(Enom, x[1]), push!(f_nom, x[2])), file["nominal"][1:end])
-foreach(x -> (push!(E0, x[1]), push!(pull0, x[2])), file["pull0"][1:end])
-foreach(x -> (push!(E1, x[1]), push!(pull1, x[2])), file["pull1"][1:end])
-foreach(x -> (push!(E2, x[1]), push!(pull2, x[2])), file["pull2"][1:end])
-foreach(x -> (push!(E3, x[1]), push!(pull3, x[2])), file["pull3"][1:end])
-
-@assert all(isapprox.(E0, E1))
-@assert all(isapprox.(E1, E2))
-@assert all(isapprox.(E2, E3))
-```
-
-```julia
-f_nom
-```
-
-```julia
-data = h5open("dayabay_data/dayabay_dataset/dayabay_background_spectra_6AD.hdf5")
-data["spectrum_shape_accidentals_AD11"][]
-close(data)
-```
-
-```julia
-f = Figure()
-ax = Axis(f[1, 1])
-
-scatter!(output.E_center_MeV, lihe_hist)
-f
-```
-
-```julia
 data_basepath = "dayabay_data/parameters"
 
 final_binning = readdlm(joinpath(data_basepath, "final_erec_bin_edges.tsv"))[2:end]
@@ -730,11 +750,6 @@ rebin_idx = searchsortedlast.(Ref(final_binning), E_center_MeV)
 
 ```julia
 searchsortedlast.(Ref(energy_bins), E_prompt_reco_binc)
-```
-
-```julia
-data = h5open("dayabay_data/neutrino_rate.hdf5")
-data["R1"][]
 ```
 
 ```julia
