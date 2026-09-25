@@ -53,7 +53,7 @@ EH_list = [1, 2, 3]
 full_setup = ["AD11", "AD12", "AD21", "AD22", "AD31", "AD32", "AD33", "AD34"]
 mask_6 =     [true,   true,   true,   false,  true,   true,   true,   false]
 mask_8 =     [true,   true,   true,   true,   true,   true,   true,   true]
-mask_7 =     [true,   false,  true,   true,   true,   true,   true,   true]
+mask_7 =     [false,  true,   true,   true,   true,   true,   true,   true]
 
 baselines = YAML.load_file("dayabay_data/parameters/baselines.yaml")
 reactors = ["R$(i)" for i in 1:6]
@@ -106,6 +106,18 @@ for p in period_list
     end
 end
 
+function retrieve_period(str::String)
+    parse(Int, str[1])
+end
+
+function retrieve_AD(str::String)
+    parse(Int, str[6:7])
+end
+
+function retrieve_EH(str::String)
+    parse(Int, str[6])
+end
+
 
 
 
@@ -137,23 +149,43 @@ function extract_for_AD_period(AD::Int, period::Int)
     close(file)
     E_center_MeV = (E_bins_MeV[1:end-1] .+ E_bins_MeV[2:end]) ./ 2
 
+
+    coarse_binning = readdlm("dayabay_data/parameters/final_erec_bin_edges.tsv")[2:end];
+    coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
+    coarse_bin_width = (coarse_binning[2:end] - coarse_binning[1:end-1])
+
+    rebin_idx = searchsortedlast.(Ref(coarse_binning), E_center_MeV)
+
+
     # extract background shapes
     bg_shape_path = joinpath(data_basepath, "dayabay_background_spectra_$(period)AD.hdf5")
     file = h5open(bg_shape_path)
+    _shape_accidental = []
+    _shape_alpha_neutron = []
+    _shape_amc = []
+    _shape_fast_neutrons = []
+    _shape_lithium_helium = []
+
+    foreach(x -> push!(_shape_accidental, x.N), file["spectrum_shape_accidentals_AD$(AD)"][1:end])
+    foreach(x -> push!(_shape_alpha_neutron, x.N), file["spectrum_shape_alpha_neutron_AD$(AD)"][1:end])
+    foreach(x -> push!(_shape_amc, x.N), file["spectrum_shape_amc_AD$(AD)"][1:end])
+    foreach(x -> push!(_shape_fast_neutrons, x.N), file["spectrum_shape_fast_neutrons_AD$(AD)"][1:end])
+    foreach(x -> push!(_shape_lithium_helium, x.N), file["spectrum_shape_lithium_helium_AD$(AD)"][1:end])
+    close(file)
+
     shape_accidental = []
     shape_alpha_neutron = []
     shape_amc = []
     shape_fast_neutrons = []
     shape_lithium_helium = []
+    for i in 1:length(coarse_binning_c)
+        push!(shape_accidental, sum(_shape_accidental[rebin_idx.==i]))
+        push!(shape_alpha_neutron, sum(_shape_alpha_neutron[rebin_idx.==i]))
+        push!(shape_amc, sum(_shape_amc[rebin_idx.==i]))
+        push!(shape_fast_neutrons, sum(_shape_fast_neutrons[rebin_idx.==i]))
+        push!(shape_lithium_helium, sum(_shape_lithium_helium[rebin_idx.==i]))
+    end
 
-    foreach(x -> push!(shape_accidental, x.N), file["spectrum_shape_accidentals_AD$(AD)"][1:end])
-    foreach(x -> push!(shape_alpha_neutron, x.N), file["spectrum_shape_alpha_neutron_AD$(AD)"][1:end])
-    foreach(x -> push!(shape_amc, x.N), file["spectrum_shape_amc_AD$(AD)"][1:end])
-    foreach(x -> push!(shape_fast_neutrons, x.N), file["spectrum_shape_fast_neutrons_AD$(AD)"][1:end])
-    foreach(x -> push!(shape_lithium_helium, x.N), file["spectrum_shape_lithium_helium_AD$(AD)"][1:end])
-    close(file)
-
-    bg_shapes = (; shape_accidental, shape_alpha_neutron, shape_amc, shape_fast_neutrons, shape_lithium_helium)
 
     # background rates + uncertainties
     bg_rate_path = joinpath(data_basepath, "dayabay_background_rates.hdf5")
@@ -186,12 +218,6 @@ function extract_for_AD_period(AD::Int, period::Int)
     eff_livetime_seconds = sum(livetime)
     eff_livetime = eff_livetime_seconds / 60 / 60 / 24   # convert from seconds to days
 
-    #counts_accidental = sum(eff_livetime .* acc_rate)
-    #counts_lithium_helium = sum(eff_livetime .* rate_lithium_helium)
-    #counts_fast_neutrons = sum(eff_livetime .* rate_fast_neutrons)
-    #counts_amc = sum(eff_livetime .* rate_amc)
-    #rate_alpha_neutron = sum(eff_livetime .* rate_alpha_neutron)
-
     lihe = (rate=rate_lithium_helium, shape=shape_lithium_helium, uncertainty=uncertainty_lithium_helium)
     amc = (rate=rate_amc, shape=shape_amc, uncertainty=uncertainty_amc)
     fast_neutrons = (rate=rate_fast_neutrons, shape=shape_fast_neutrons, uncertainty=uncertainty_fast_neutrons)
@@ -216,7 +242,7 @@ function get_iav_matrix()
     transpose(iav)   # multiply with vector of spectrum from r.h.s. -> smeared spectrum
 end
 
-function get_lsnl_correction()
+function lsnl_correction()
     # gives ratio of visible/true energy, hence multiply true energy to go to visible
     file = h5open("dayabay_data/detector_lsnl_curves.hdf5")
 
@@ -643,8 +669,8 @@ function get_proton_number()
     n_protons = OrderedDict(key => correction[key] * nom for key in keys(correction))
 end
 
-function lsnl_correction()
-    lsnl = get_lsnl_correction()
+function get_lsnl_correction()
+    lsnl = lsnl_correction()
     #interp = Interpolator(lsnl.E, lsnl.f_nom, extrapolate=true)
     #func(E) = isnan(interp(E)) ? 0.0 : interp(E)
     interp = linear_interpolation(lsnl.E, lsnl.f_nom, extrapolation_bc=Flat())
@@ -711,6 +737,284 @@ reactor_flux = get_reactor_flux()
 ```
 
 ```julia
+# do period 6, AD11 and AD12
+period = 6
+ADs = ["AD11", "AD12"]
+
+for AD in ADs
+    AD_int = AD_str_to_int(AD)
+    output = extract_for_AD_period(AD_int, period)
+    eff_livetime = output.eff_livetime
+    accidentals = bg_dict["accidentals"]
+
+    amc = bg_dict["amc"]
+    lihe = bg_dict["lithium_helium"]
+    fast_n = bg_dict["fast_neutrons"]
+    alpha_n = bg_dict["alpha_neutron"]
+
+    ## background stuff
+    # part of forward model
+    acc_counts = eff_livetime * accidentals.rate * params.acc_scale[idx] .* accidentals.shape 
+
+    amc_counts = eff_livetime * amc.rate * (1 + amc.uncertainty * params.amc_unc_scale) .* amc.shape
+
+    period_EH_idx = findall(x-> x == "$(period)AD_$(idx)", period_EH_list)[1]
+    lihe_counts = eff_livetime * lihe.rate * (1 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]) .* lihe.shape
+
+    fast_n_counts = eff_livetime * fast_n.rate * (1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]) .* fast_n.shape
+
+    alpha_n_counts = eff_livetime * alpha_n.rate .* alpha_n.shape;
+
+    ## assume for now that background does not neet to be put through the IRF 
+    # TODO: check in dagflow model
+    background_counts = @. acc_counts + amc_counts + lihe_counts + fast_n_counts + alpha_n_counts
+```
+
+```julia
+output = extract_for_AD_period(11, 6)
+```
+
+```julia
+function get_assets()
+    
+    period_list = ["6AD", "8AD", "7AD"]
+
+    EH_list = [1, 2, 3]
+
+    full_setup = ["AD11", "AD12", "AD21", "AD22", "AD31", "AD32", "AD33", "AD34"]
+    mask_6 =     [true,   true,   true,   false,  true,   true,   true,   false]
+    mask_8 =     [true,   true,   true,   true,   true,   true,   true,   true]
+    mask_7 =     [false,  true,   true,   true,   true,   true,   true,   true]
+
+    baselines = YAML.load_file("dayabay_data/parameters/baselines.yaml")
+    reactors = ["R$(i)" for i in 1:6]
+    baselines["parameters"]["baseline"]
+
+    distances = Dict()
+    distances["AD"] = full_setup
+    for reac in reactors
+        distances[reac] = [baselines["parameters"]["baseline"][ad][reac] for ad in full_setup]
+    end
+
+    distances["6AD"] = mask_6
+    distances["8AD"] = mask_8
+    distances["7AD"] = mask_7
+
+    df_exp = DataFrame(distances)
+
+
+    detectors_6AD = full_setup[mask_6]
+    detectors_8AD = full_setup[mask_8]
+    detectors_7AD = full_setup[mask_7]
+
+    detector_dict = Dict("6AD"=>detectors_6AD, "8AD"=>detectors_8AD, "7AD"=>detectors_7AD)
+
+    # detector_list = vcat(full_setup[mask_6], full_setup[mask_8], full_setup[mask_7])
+
+    period_EH_list = []
+    for p in period_list
+        for EH in EH_list
+            push!(period_EH_list, "$(p)_$(EH)")
+        end
+    end
+
+    detector_list = []
+    for p in period_list
+        for AD in detector_dict[p]
+            push!(detector_list, "$(p)$(AD)")
+        end
+    end
+
+    
+
+    assets = (;
+        period_list,
+        EH_list,
+        df_exp,
+        detector_dict,
+        detectors_6AD,
+        detectors_8AD,
+        detectors_7AD,
+        detector_list,
+    )
+end
+
+
+function get_forward_model()
+    assets = get_assets()
+    df_exp = assets.df_exp
+    detector_list = assets.detector_list
+    EH_list = assets.EH_list
+    period_list = assets.period_list
+    detector_dict = assets.detector_dict
+
+
+    reactor_flux = get_reactor_flux()
+    xsec_config = Newtrinos.ibd_xsec.configure()
+    xsec = xsec_config.xsec
+    xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale)
+    iav = get_iav_matrix()
+    lsnl = get_lsnl_correction()
+
+    data_basepath = "dayabay_data/parameters"
+
+    coarse_binning = readdlm(joinpath(data_basepath, "final_erec_bin_edges.tsv"))[2:end];
+    coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
+    coarse_bin_width = (coarse_binning[2:end] - coarse_binning[1:end-1])
+    fine_binning_Edep = collect(LinRange(0, 12, 241))
+    fine_Edep_c = (fine_binning_Edep[1:end-1] + fine_binning_Edep[2:end]) / 2
+    fine_binning_Enu = fine_binning_Edep .+ 0.782 # approx
+    fine_Enu_c = (fine_binning_Enu[2:end] + fine_binning_Enu[1:end-1]) ./ 2
+    fine_binning_Edep_width = fine_binning_Edep[2:end] .- fine_binning_Edep[1:end-1];
+    n_protons = get_proton_number()
+
+
+    ## create background model functions, taking parameter NamedTuple as arg
+    background_models = OrderedDict()
+
+    ## create anti-neutrino forward model
+    neutrino_models = OrderedDict()
+
+    for (idx, p_AD) in enumerate(detector_list)
+        period = retrieve_period(p_AD)
+        AD = retrieve_AD(p_AD)
+        EH = retrieve_EH(p_AD)
+        println(AD, period)
+        output = extract_for_AD_period(AD, period)
+        bg_dict = output.bg_dict
+
+        ad_idx = findfirst(df_exp[!, "AD"] .== "AD$(AD)")
+        L = collect(df_exp[ad_idx, [:R1, :R2, :R3, :R4, :R5, :R6]])
+        L2 = 4 * pi .* L.^2;
+        n_p = n_protons["AD$(AD)"]
+
+
+
+        function background_counts(params)
+            eff_livetime = output.eff_livetime
+            accidentals = bg_dict["accidentals"]
+
+            amc = bg_dict["amc"]
+            lihe = bg_dict["lithium_helium"]
+            fast_n = bg_dict["fast_neutrons"]
+            alpha_n = bg_dict["alpha_neutron"]
+
+            ## background stuff
+            # part of forward model
+            acc_counts = eff_livetime * accidentals.rate * params.acc_scale[idx] .* accidentals.shape 
+            amc_counts = eff_livetime * amc.rate * (1 + amc.uncertainty * params.amc_unc_scale) .* amc.shape
+            period_EH_idx = findall(x-> x == "$(period)AD_$(idx)", period_EH_list)[1]
+            lihe_counts = eff_livetime * lihe.rate * (1 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]) .* lihe.shape
+
+            fast_n_counts = eff_livetime * fast_n.rate * (1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]) .* fast_n.shape
+
+            alpha_n_counts = eff_livetime * alpha_n.rate .* alpha_n.shape;
+
+            ## assume for now that background does not neet to be put through the IRF 
+            return @. acc_counts + amc_counts + lihe_counts + fast_n_counts + alpha_n_counts
+        end
+        background_models[p_AD] = background_counts
+
+
+        function neutrino_counts(params)
+            integrated_spectrum = zeros(length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
+            for i in 1:6   # loop over reactors
+                # TODO: add multiplication with oscillation as function of L
+                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params.fission_fractions_scale)
+                integrated_spectrum_per_reactor = Float64[]
+                for (l, h) in zip(fine_binning_Enu[1:end-1], fine_binning_Enu[2:end]) 
+                    domain = (l, h)
+                    prob = IntegralProblem(integrand, domain)
+                    sol = solve(prob, QuadGKJL())
+                    push!(integrated_spectrum_per_reactor, sol.u)
+                end
+                integrated_spectrum += integrated_spectrum_per_reactor ./ L2[i]
+            end
+
+            integrated_spectrum .*= 1e-45 * output.eff_livetime_seconds * n_p ## m2 (from xsec) * lifetime * AD's proton number
+
+
+            smeared_spectrum = iav * integrated_spectrum;
+
+
+            # transform from Escint to Evis by lsnl and relative energy scale (set the latter to unity for now)
+            # two options: either transform bin edges and divide by shifted bin edges to get pdf, or shift at bin centers, multiply with differential 
+
+            E_vis = @. lsnl(fine_Edep_c) * fine_Edep_c
+            E_vis_edges = @. lsnl(fine_binning_Edep) * fine_binning_Edep;
+
+            # get energy resolution 
+            sigma_E = eres(E_vis, params.eres_a, params.eres_b, params.eres_c);
+
+            resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, width=20);
+            spectrum_pdf = resolved_spectrum ./ (E_vis_edges[2:end] - E_vis_edges[1:end-1])
+
+            
+            spectrum_integrated_coarse = []
+            interpolated_pdf = Interpolator(E_vis, spectrum_pdf)
+            interp(E) = isnan(interpolated_pdf(E)) ? 0 : interpolated_pdf(E)
+
+            integrand_coarse(E, u) = interp(E)
+
+            for (l, h) in zip(coarse_binning[1:end-1], coarse_binning[2:end])
+                domain = (l, h)
+                prob = IntegralProblem(integrand_coarse, domain)
+                sol = solve(prob, QuadGKJL())
+                push!(spectrum_integrated_coarse, sol.u)
+            end
+            spectrum_integrated_coarse
+        end
+
+        neutrino_models[p_AD] = neutrino_counts
+        break
+
+    end
+
+
+    ## create neutrino ibd forward model
+    
+    
+    return neutrino_models
+
+
+end
+
+```
+
+```julia
+neutrino_model = get_forward_model()
+```
+
+```julia
+neutrino_model["6ADAD11"](get_params())
+```
+
+```julia
+### background 'forward' model
+# for p in periods
+#   for AD in ADs
+#       get shapes, rates and eff_livetime
+#       bg-appropriate count computation
+```
+
+```julia
+function get_forward_model()
+    assets = get_assets()
+
+
+    reactor_flux = get_reactor_flux()
+
+    xsec_config = Newtrinos.ibd_xsec.configure()
+    xsec = xsec_config.xsec
+
+    function forward_model(params, physics, assets)
+    end
+
+    forward_model
+end
+```
+
+```julia
 ### conceptual forward model (with some backwards-oriented thoughts)
 
 # get neutrino x ibc-xsec spectrum
@@ -762,7 +1066,6 @@ rebin_idx = searchsortedlast.(Ref(coarse_binning), E_center_MeV)
 #idx = findall(x-> x=="AD$(period)$(AD)", detector_list)[1]
 
 idx = 1
-
 bg_dict = output.bg_dict
 eff_livetime = output.eff_livetime
 accidentals = bg_dict["accidentals"]
@@ -771,7 +1074,6 @@ amc = bg_dict["amc"]
 lihe = bg_dict["lithium_helium"]
 fast_n = bg_dict["fast_neutrons"]
 alpha_n = bg_dict["alpha_neutron"]
-
 
 ## background stuff
 # part of forward model
