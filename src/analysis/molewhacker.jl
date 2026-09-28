@@ -4,6 +4,7 @@ using DensityInterface
 using DataFrames
 using Accessors
 using Optimization, ADTypes
+using OptimizationLBFGSB
 using MeasureBase
 using LinearAlgebra
 using PositiveFactorizations
@@ -52,7 +53,7 @@ function importance_sampling(pstr, approx_dist, nsamples)
     end
     logw_raw = logd_p .- logd_q;
     w = exp.(logw_raw .- maximum(logw_raw));
-    smpls_p = DensitySampleVector(x_q, logd_p, weight=w)
+    smpls_p = DensitySampleVector(v=x_q, logd=logd_p, weight=w)
 end
 
 """
@@ -128,9 +129,11 @@ starting points), fits a [`local_MGVI_approx`](@ref) at each mode, and combines
 them into a `MixtureModel`. The mixture model weights are calculated as 
 
 ```math
-\\log \\tilde{w}_i &= \\log p (\\mu_i) - \\log q (\\mu_i) 
-\\tilde{w}_i &= \\exp\\bigl(\\log \\tilde{w}_i - \\max(\\log \\tilde{w})\\bigr) 
-w_i &= \\frac{\\tilde{w}_i}{\\sum_j \\tilde{w}_j} 
+\\begin{aligned}
+\\log \\tilde{w}_i &= \\log p (\\mu_i) - \\log q (\\mu_i) \\\\
+\\tilde{w}_i &= \\exp\\bigl(\\log \\tilde{w}_i - \\max(\\log \\tilde{w})\\bigr) \\\\
+w_i &= \\frac{\\tilde{w}_i}{\\sum_j \\tilde{w}_j}
+\\end{aligned}
 ```
 
 where ``\\mu_i`` is the mode of the ``i``-th component. Importance samples are
@@ -158,7 +161,7 @@ function make_init_samples(posterior, nseeds::Int=10, nsamples::Int=10_000)
     Threads.@threads for i in 1:nseeds
         adsel = AutoForwardDiff()
         set_batcontext(ad = adsel)
-        r = bat_findmode(pstr, OptimizationAlg(optalg=Optimization.LBFGS(), init = ExplicitInit([seeds[i]])))
+        r = bat_findmode(pstr, TransformedMaxDensity(optalg=OptimizationAlg(optalg=OptimizationLBFGSB.LBFGSB()), init = ExplicitInit([seeds[i]])))
         components[i] = local_MGVI_approx(pstr, r.result)
     end
 
@@ -227,7 +230,7 @@ function make_init_samples(posterior, seed_points::DataFrame, nsamples::Int=10_0
     Threads.@threads for i in 1:length(seeds)
         adsel = AutoForwardDiff()
         set_batcontext(ad = adsel)
-        r = bat_findmode(pstr, OptimizationAlg(optalg=Optimization.LBFGS(), init = ExplicitInit([seeds[i]]), kwargs = (reltol=1e-4, maxiters=100)))
+        r = bat_findmode(pstr, TransformedMaxDensity(optalg=OptimizationAlg(optalg=OptimizationLBFGSB.LBFGSB(), kwargs = (reltol=1e-4, maxiters=100)), init = ExplicitInit([seeds[i]])))
         components[i] = local_MGVI_approx(pstr, r.result)
     end
 

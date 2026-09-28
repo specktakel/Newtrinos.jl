@@ -12,7 +12,9 @@ using StaticArrays
             Newtrinos.osc.ThreeFlavour(),
             Newtrinos.osc.ThreeFlavourXYCP(),
             Newtrinos.osc.Sterile(),
-            Newtrinos.osc.ADD()]#=,
+            Newtrinos.osc.ADD(),
+            Newtrinos.osc.NND(),
+            Newtrinos.osc.NNM(),] #=,
             Newtrinos.osc.Darkdim_Lambda(),
             Newtrinos.osc.Darkdim_Masses(),
             Newtrinos.osc.Darkdim_cas()]=#
@@ -37,6 +39,8 @@ using StaticArrays
         ThreeFlavourXYCP_Params = merge(angles, NO_masses, (δCPshell = [1.0, 0.0],))
         Sterile_Params = merge(ThreeFlavour_Params_NO, (Δm²₄₁ = 1.0, θ₁₄ = 0.1, θ₂₄ = 0.1, θ₃₄ = 0.1,))
         ADD_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, ADD_radius = 1e-2,))
+        NND_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, N = 50, r=1e-8,))
+        NNM_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, N = 50, r=1e-8,))
         Darkdim_Lambda_Params = merge(angles, δCP, (Darkdim_radius = 0.1, ca1 = 1e-5, ca2 = 1e-5, ca3 = 1e-5, λ₁ = 1.0, λ₂ = 1.0, λ₃ = 1.0,))
         Darkdim_Masses_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, Darkdim_radius = 0.1, λ₁ = 1.0, λ₂ = 1.0, λ₃ = 1.0,))
         Darkdim_cas_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, Darkdim_radius = 0.1, ca1 = 1e-5, ca2 = 1e-5, ca3 = 1e-5,))
@@ -58,6 +62,14 @@ using StaticArrays
         for key in keys(ADD_Params)
             @test getfield(Newtrinos.osc.get_params(Newtrinos.osc.ADD()), key) ≈ getfield(ADD_Params, key) atol = 1e-4
         end
+
+         for key in keys(NND_Params)
+            @test getfield(Newtrinos.osc.get_params(Newtrinos.osc.NND()), key) ≈ getfield(NND_Params, key) atol = 1e-4
+        end
+
+         for key in keys(NNM_Params)
+            @test getfield(Newtrinos.osc.get_params(Newtrinos.osc.NNM()), key) ≈ getfield(NNM_Params, key) atol = 1e-4
+        end
         # darkdim not yet exported from osc file
         #= for key in keys(Darkdim_Lambda_Params)
             @test getfield(Newtrinos.osc.get_params(Newtrinos.osc.Darkdim_Lambda()), key) ≈ getfield(Darkdim_Lambda_Params, key) atol = 1e-4
@@ -76,6 +88,8 @@ using StaticArrays
         priors_ThreeFlavourXYCP = Newtrinos.osc.get_priors(Newtrinos.osc.ThreeFlavourXYCP())
         priors_Sterile = Newtrinos.osc.get_priors(Newtrinos.osc.Sterile())
         priors_ADD = Newtrinos.osc.get_priors(Newtrinos.osc.ADD())
+        priors_NND = Newtrinos.osc.get_priors(Newtrinos.osc.NND())
+        priors_NNM = Newtrinos.osc.get_priors(Newtrinos.osc.NNM()) 
         # priors_Darkdim_Lambda = Newtrinos.osc.get_priors(Newtrinos.osc.Darkdim_Lambda())
         # priors_Darkdim_Masses = Newtrinos.osc.get_priors(Newtrinos.osc.Darkdim_Masses())
         # priors_Darkdim_cas = Newtrinos.osc.get_priors(Newtrinos.osc.Darkdim_cas())
@@ -95,6 +109,14 @@ using StaticArrays
         # ADD
         @test getfield(priors_ADD, :m₀) isa LogUniform
         @test getfield(priors_ADD, :ADD_radius) isa LogUniform
+        # NND
+        @test getfield(priors_NND, :m₀) isa LogUniform
+        @test getfield(priors_NND, :N) isa DiscreteUniform
+        @test getfield(priors_NND, :r) isa LogUniform
+        # NNM
+        @test getfield(priors_NNM, :m₀) isa LogUniform
+        @test getfield(priors_NNM, :N) isa DiscreteUniform
+        @test getfield(priors_NNM, :r) isa LogUniform
         # Darkdim_Lambda
         #= @test getfield(priors_Darkdim_Lambda, :Darkdim_radius) isa LogUniform
         @test !haskey(priors_Darkdim_Lambda, :Δm²₂₁)
@@ -484,7 +506,8 @@ using StaticArrays
             for (ie, e) in enumerate(E), (il, l) in enumerate(L)
                 phases = -F * 1im * (l / e) .* h
                 A = U_manual * Diagonal(exp.(phases)) * U_manual'
-                expected[ie, il, :, :] = abs2.(A)
+                # expected[α, β] = P(α → β) = |A[β, α]|² (A[out, in] convention)
+                expected[ie, il, :, :] = abs2.(A)'
             end
 
             @test result ≈ expected atol = 1e-10
@@ -535,7 +558,8 @@ using StaticArrays
             for (ie, e) in enumerate(E), (il, l) in enumerate(L)
                 phases = -F * 1im * (l / e) .* h
                 A = U_anti * Diagonal(exp.(phases)) * U_anti'
-                expected_anti[ie, il, :, :] = abs2.(A)
+                # expected[α, β] = P(α → β) = |A[β, α]|² (A[out, in] convention)
+                expected_anti[ie, il, :, :] = abs2.(A)'
             end
 
             @test result_anti ≈ expected_anti atol = 1e-10
@@ -564,6 +588,48 @@ using StaticArrays
             r_basic = Newtrinos.osc.get_osc_prob(Newtrinos.osc.OscillationConfig(propagation = Newtrinos.osc.Basic()))(E, L, params)
             r_damp = Newtrinos.osc.get_osc_prob(Newtrinos.osc.OscillationConfig(propagation = Newtrinos.osc.Damping()))(E, L, params)
             @test !(r_basic ≈ r_damp)
+        end
+
+        # Spray needs matter propagation (interaction=SI) through real Earth layers/paths,
+        # since its dL/dh production-height correction reads layers.radius[1:2] as the
+        # atmosphere/next-layer boundary — unlike Basic/Damping/Decoherent it has no plain
+        # vacuum (E, L) method.
+        @testset "Spray propagation" begin
+            earth = Newtrinos.earth_layers.configure()
+            layers = earth.compute_layers()
+            cz = [-1.0, -0.5, -0.1, 0.3, 1.0]
+            paths = earth.compute_paths(cz, layers)
+
+            params = Newtrinos.osc.get_params(Newtrinos.osc.ThreeFlavour())
+            E = [1.0, 5.0, 10.0]
+
+            cfg_basic = Newtrinos.osc.OscillationConfig(interaction = Newtrinos.osc.SI(), propagation = Newtrinos.osc.Basic())
+            result_basic = Newtrinos.osc.get_osc_prob(cfg_basic)(E, paths, layers, params)
+
+            @testset "$(averaging) averaging" for averaging in (:gaussian, :uniform)
+                # essentially unsmeared: should reproduce the un-averaged Basic result
+                cfg_tiny = Newtrinos.osc.OscillationConfig(interaction = Newtrinos.osc.SI(),
+                    propagation = Newtrinos.osc.Spray(averaging = averaging, σ_E = 1e-6, σ_h = 1e-4))
+                result_tiny = Newtrinos.osc.get_osc_prob(cfg_tiny)(E, paths, layers, params)
+
+                @test size(result_tiny) == size(result_basic)
+                @test result_tiny ≈ result_basic atol = 1e-4
+
+                # default smearing widths: still a valid probability distribution
+                cfg_default = Newtrinos.osc.OscillationConfig(interaction = Newtrinos.osc.SI(),
+                    propagation = Newtrinos.osc.Spray(averaging = averaging))
+                result_default = Newtrinos.osc.get_osc_prob(cfg_default)(E, paths, layers, params)
+
+                @test size(result_default) == size(result_basic)
+                @test all(isfinite, result_default)
+                @test all(result_default .>= -1e-8) && all(result_default .<= 1.0 + 1e-8)
+                for ie in axes(result_default, 1), ip in axes(result_default, 2), α in axes(result_default, 3)
+                    @test sum(result_default[ie, ip, α, :]) ≈ 1.0 atol = 1e-6
+                end
+
+                # non-trivial smearing actually changes the result vs. the un-averaged case
+                @test !(result_default ≈ result_basic)
+            end
         end
 
     end
@@ -779,6 +845,114 @@ using StaticArrays
             @test length(h_3) == dim_3
         end
 
+
+
+        # test for NND model
+        @testset "NND" begin
+            NND_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, N = 50, r=1e-8,))
+            N = NND_Params.N
+            dim= 3*N 
+            r=NND_Params.r
+            cfg = Newtrinos.osc.NND()
+            matrices_fn = Newtrinos.osc.get_matrices(cfg)
+            U, h, eigenvalues, V_e, V_m, V_t= matrices_fn(NND_Params)
+
+            # Shape and size
+            @test size(U) == (dim, dim)
+            @test length(h) == dim
+
+            # Eigenvalues sorted and non-negative (from Hermitian M†M)
+            @test issorted(h[1:3:end])
+            @test issorted(h[2:3:end])
+            @test issorted(h[3:3:end])
+            @test all(h .>= -1e-10)
+
+            # Unitarity
+            @test U' * U ≈ I(dim) atol = 1e-8
+            @test U * U' ≈ I(dim) atol = 1e-8
+
+            # Compare eigenvalues with expected values from NND_Params in the SM limit 
+
+            m1_sq = NND_Params.m₀^2
+            m2_sq = NND_Params.Δm²₂₁ + NND_Params.m₀^2
+            m3_sq = NND_Params.Δm²₃₁ + NND_Params.m₀^2
+
+            @test eigenvalues[1] ≈ m1_sq rtol = 1e-2
+            @test eigenvalues[2] ≈ m2_sq rtol = 1e-2
+            @test eigenvalues[3] ≈ m3_sq rtol = 1e-2
+
+            @test h[1] ≈ 0.0 atol = 1e-8
+            @test h[2] ≈ NND_Params.Δm²₂₁ rtol = 1e-2
+            @test h[3] ≈ NND_Params.Δm²₃₁ rtol = 1e-2
+
+            for i in 2:N-1
+                @test eigenvalues[3*i-2] ≈ (2*(i-1)+r)*m1_sq/r rtol = 1e-2
+                @test eigenvalues[3*i-1] ≈ (2*(i-1)+r)*m2_sq/r rtol = 1e-2
+                @test eigenvalues[3*i] ≈ (2*(i-1)+r)*m3_sq/r rtol = 1e-2
+            end
+
+            @test eigenvalues[3*N-2] ≈ (N^2/2)*(2*(N-1)+r)*m1_sq/r rtol = 2e-2
+            @test eigenvalues[3*N-1] ≈ (N^2/2)*(2*(N-1)+r)*m2_sq/r rtol = 2e-2
+            @test eigenvalues[3*N] ≈ (N^2/2)*(2*(N-1)+r)*m3_sq/r rtol = 2e-2
+
+           
+        end
+
+        
+        # test for NNM model
+        @testset "NNM" begin
+            NNM_Params = merge(ThreeFlavour_Params_NO, (m₀ = 0.01, N = 50, r=1e-8,))
+            N = NNM_Params.N
+            dim= 3*N 
+            r=NNM_Params.r
+            cfg = Newtrinos.osc.NNM()
+            matrices_fn = Newtrinos.osc.get_matrices(cfg)
+            U, h, eigenvalues, V_e, V_m, V_t= matrices_fn(NNM_Params)
+
+            # Shape and size
+            @test size(U) == (dim, dim)
+            @test length(h) == dim
+
+            # Eigenvalues sorted and non-negative (from Hermitian M†M)
+            @test issorted(h[1:3:end])
+            @test issorted(h[2:3:end])
+            @test issorted(h[3:3:end])
+            @test all(h .>= -1e-10)
+
+            # Unitarity
+            @test U' * U ≈ I(dim) atol = 1e-8
+            @test U * U' ≈ I(dim) atol = 1e-8
+
+            # Compare eigenvalues with expected values from NNM_Params in the SM limit 
+
+            m1_sq = NNM_Params.m₀^2
+            m2_sq = NNM_Params.Δm²₂₁ + NNM_Params.m₀^2
+            m3_sq = NNM_Params.Δm²₃₁ + NNM_Params.m₀^2
+
+            @test eigenvalues[1] ≈ m1_sq rtol = 2e-2
+            @test eigenvalues[2] ≈ m2_sq rtol = 2e-2
+            @test eigenvalues[3] ≈ m3_sq rtol = 2e-2
+
+            @test h[1] ≈ 0.0 atol = 1e-8
+            @test h[2] ≈ NNM_Params.Δm²₂₁ rtol = 2e-2
+            @test h[3] ≈ NNM_Params.Δm²₃₁ rtol = 2e-2
+
+            for i in 2:N-1
+                @test eigenvalues[3*i-2] ≈ (2*(i-1)+r)^2*m1_sq/r^2 rtol = 1e-2
+                @test eigenvalues[3*i-1] ≈ (2*(i-1)+r)^2*m2_sq/r^2 rtol = 1e-2
+                @test eigenvalues[3*i] ≈ (2*(i-1)+r)^2*m3_sq/r^2 rtol = 1e-2
+            end
+
+            @test eigenvalues[3*N-2] ≈ (N^4/4)*(2*(N-1)+r)^2*m1_sq/r^2 rtol = 3e-2
+            @test eigenvalues[3*N-1] ≈ (N^4/4)*(2*(N-1)+r)^2*m2_sq/r^2 rtol = 3e-2
+            @test eigenvalues[3*N] ≈ (N^4/4)*(2*(N-1)+r)^2*m3_sq/r^2 rtol = 3e-2
+
+           
+        end
+
+
     end
 
 end
+
+

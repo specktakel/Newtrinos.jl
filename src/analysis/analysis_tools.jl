@@ -6,6 +6,7 @@ import ForwardDiff
 import PolyesterForwardDiff
 using BAT
 using Optimization
+using OptimizationLBFGSB
 using IterTools
 using DataStructures
 using ADTypes
@@ -167,16 +168,18 @@ function Base.getproperty(wrapper::Wrapper, name::Symbol)
     end
     if name == :forward_model
         function forward_model(params)
-            orig_param_names = Tuple([get(wrapper.reverse_lookup, k, k) for k in keys(params)])
-            orig_params = NamedTuple{orig_param_names}(values(params))
+            own_params = NamedTuple{Tuple(wrapper.translated_keys)}(params)
+            orig_param_names = Tuple([get(wrapper.reverse_lookup, k, k) for k in keys(own_params)])
+            orig_params = NamedTuple{orig_param_names}(values(own_params))
             return wrapper.x.forward_model(orig_params)
         end
         return forward_model
     end
     if name == :plot
         function plot(params, data=wrapper.x.assets.observed)
-            orig_param_names = Tuple([get(wrapper.reverse_lookup, k, k) for k in keys(params)])
-            orig_params = NamedTuple{orig_param_names}(values(params))
+            own_params = NamedTuple{Tuple(wrapper.translated_keys)}(params)
+            orig_param_names = Tuple([get(wrapper.reverse_lookup, k, k) for k in keys(own_params)])
+            orig_params = NamedTuple{orig_param_names}(values(own_params))
             return wrapper.x.plot(orig_params, data)
         end
         return plot
@@ -543,11 +546,18 @@ function find_mle(likelihood, prior, params; adsel = AutoPolyesterForwardDiff())
         end
 
         @info msg
-        res = bat_findmode(posterior, OptimizationAlg(optalg=Optimization.LBFGS(), init = ExplicitInit([params]), kwargs = (reltol=1e-7, maxiters=1000)))
+        res = bat_findmode(posterior, TransformedMaxDensity(optalg=OptimizationAlg(optalg=OptimizationLBFGSB.LBFGSB(), kwargs = (reltol=1e-7, maxiters=1000)), init = ExplicitInit([params])))
 
         return logdensityof(likelihood, res.result), logdensityof(posterior, res.result), res.result
     catch e
-        if e isa ArgumentError
+        # BAT v5's checked_logdensityof wraps a caught error in BAT.EvalException,
+        # whose constructor requires an `AbstractMeasure` target; a plain `Likelihood`
+        # (as produced by `likelihoodof`) doesn't qualify, so the wrapping itself
+        # throws a MethodError instead of propagating the original ArgumentError
+        # (see https://github.com/bat/BAT.jl, BAT.EvalException in v5.1.0).
+        is_wrapped_argerror = e isa MethodError && e.f === BAT.EvalException &&
+            length(e.args) >= 4 && e.args[4] isa ArgumentError
+        if e isa ArgumentError || is_wrapped_argerror
             return NaN, NaN, (; (k => NaN for k in keys(params))... )
         else
             rethrow(e)
@@ -905,13 +915,15 @@ end
 """
     add_meta!(meta::Dict)
 
-Populate a metadata dictionary with execution environment information.
+Populate a metadata dictionary with execution environment information. When Newtrinos 
+is loaded from the julia package index, it marks the git-repo information as missing.
 
 Adds the following keys in-place:
 - `"hostname"`: result of `gethostname()`.
 - `"username"`: from `ENV["USER"]` or `ENV["USERNAME"]`.
 - `"date"`: current date-time formatted as `"yyyy-mm-dd HH:MM:SS"`.
-- `"repo"`: path to the Newtrinos.jl repository root.
+- `"repo"`: path to the Newtrinos.jl root.
+- `"package_version"`: loaded version of the Newtrinos.jl package.
 - `"commit_hash"`: current HEAD commit hash.
 - `"repo_clean"`: `true` if the repository has no uncommitted changes.
 
@@ -930,6 +942,12 @@ function add_meta!(meta)
     meta["date"] = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
     repo = dirname(dirname(pathof(Newtrinos)))
     meta["repo"] = repo
-    meta["commit_hash"] = LibGit2.head(repo)
-    meta["repo_clean"] = !LibGit2.isdirty(LibGit2.GitRepo(repo))
+    meta["package_version"] = pkgversion(Newtrinos)
+    try
+        meta["commit_hash"] = LibGit2.head(repo)
+        meta["repo_clean"] = !LibGit2.isdirty(LibGit2.GitRepo(repo))
+    catch e    
+        meta["commit_hash"] = missing
+        meta["repo_clean"] = missing
+    end
 end

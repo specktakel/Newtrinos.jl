@@ -8,12 +8,14 @@ using Printf
 const ALL_REFERENCE_VALUES = (
     dayabay      = -168.90003273508322,
     kamland      = -63.111403860037875,
-    minos        = -268.3363280363475,
-    deepcore     = -950.7063452304332,
-    super_k      = -3706.345109466843,
-    orca         = -1164.2506083927215,
-    coherent_csi = -574.3416032522271,
-    coherent_lAr = -1754.9946939034153,
+    minos        = -268.4046154382636,
+    deepcore     = -950.6250215221039,
+    super_k      = -3433.7662672760994,
+    orca         = -1164.3664813528792,
+    coherent_csi = -478.4346284831287,
+    coherent_lAr = -1755.0426661113386,
+    katrin       = 0.4549394122046937,
+    gerda        = -85.50961704258683,
 )
 
 # Parse --experiments from ARGS if present, otherwise run all
