@@ -1,6 +1,6 @@
 module dayabay_rewrite
 using DataFrames
-using CSV, DataFrames
+using CSV
 using LinearAlgebra
 using Distributions
 using DataStructures
@@ -10,8 +10,9 @@ using Logging
 using BAT
 using HDF5
 using Interpolations
+using Integrals
 using SpecialFunctions: erfc
-using SparseArrays
+#using SparseArrays
 using DelimitedFiles
 using PCHIPInterpolation
 import YAML
@@ -604,8 +605,8 @@ function get_priors(datadir = @__DIR__)
     corr_mat = hcat(dict["correlations"]["detector_relative"]["matrix"]...)
     # correlation(i, j) = covariance(i, j) / sqrt(var_i * var_j)) -> invert to get covariance matrix for MvNormal
     cov_mat = corr_mat .* scale
-    println(scale)
-    println(cov_mat)
+    #println(scale)
+    #println(cov_mat)
     eff_eres_nom = Vector([eff_nom, e_scale_nom])
     eff_eres_AD11 = Distributions.MvNormal(eff_eres_nom, cov_mat)
     eff_eres_AD12 = Distributions.MvNormal(eff_eres_nom, cov_mat)
@@ -720,7 +721,7 @@ function get_priors(datadir = @__DIR__)
 end
 
 function get_assets(datadir = @__DIR__)
-    
+    @info "Loading DayaBay data"
     period_list = ["6AD", "8AD", "7AD"]
 
     EH_list = [1, 2, 3]
@@ -774,13 +775,20 @@ function get_assets(datadir = @__DIR__)
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
         push!(observed, get_observed_counts(AD, period))
-        break
+        # break
     end
     
     observed = vcat(observed...)
 
     data_basepath = "dayabay_data/parameters"
     coarse_binning = readdlm(joinpath(datadir, data_basepath, "final_erec_bin_edges.tsv"))[2:end];
+    coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
+    coarse_bin_width = diff(coarse_binning)
+    fine_binning_Edep = collect(LinRange(0, 12, 241))
+    fine_binning_Enu = fine_binning_Edep .+ 0.782 # approx
+    fine_binning_Edep_c = (fine_binning_Edep[1:end-1] + fine_binning_Edep[2:end]) / 2
+    fine_binning_Enu_c = (fine_binning_Enu[2:end] + fine_binning_Enu[1:end-1]) ./ 2
+    fine_bin_Edep_width = diff(fine_binning_Edep)
 
     assets = (;
         period_list,
@@ -793,6 +801,13 @@ function get_assets(datadir = @__DIR__)
         detectors_7AD,
         detector_list,
         coarse_binning,
+        coarse_binning_c,
+        coarse_bin_width,
+        fine_binning_Enu,
+        fine_binning_Enu_c,
+        fine_binning_Edep,
+        fine_binning_Edep_c,
+        fine_bin_Edep_width,
         observed,
     )
 end
@@ -841,9 +856,6 @@ end
 function get_forward_model(physics, assets, datadir = @__DIR__)
     df_exp = assets.df_exp
     detector_list = assets.detector_list
-    EH_list = assets.EH_list
-    period_list = assets.period_list
-    detector_dict = assets.detector_dict
 
     # TODO: move to physics
     reactor_flux = get_reactor_flux(datadir)
@@ -856,14 +868,15 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     iav = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
+
     coarse_binning = assets.coarse_binning
-    coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
-    coarse_bin_width = (coarse_binning[2:end] - coarse_binning[1:end-1])
-    fine_binning_Edep = collect(LinRange(0, 12, 241))
-    fine_Edep_c = (fine_binning_Edep[1:end-1] + fine_binning_Edep[2:end]) / 2
-    fine_binning_Enu = fine_binning_Edep .+ 0.782 # approx
-    fine_Enu_c = (fine_binning_Enu[2:end] + fine_binning_Enu[1:end-1]) ./ 2
-    fine_binning_Edep_width = fine_binning_Edep[2:end] .- fine_binning_Edep[1:end-1];
+    coarse_binning_c = assets.coarse_binning_c
+    coarse_bin_width = assets.coarse_bin_width
+    fine_binning_Enu = assets.fine_binning_Enu
+    fine_binning_Enu_c = assets.fine_binning_Enu_c
+    fine_binning_Edep = assets.fine_binning_Edep
+    fine_binning_Edep_c = assets.fine_binning_Edep_c
+    fine_bin_Edep_width = assets.fine_bin_Edep_width
 
 
     ## create background model functions, taking parameter NamedTuple as arg
@@ -876,7 +889,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         period = retrieve_period(p_AD)
         AD = retrieve_AD(p_AD)
         EH = retrieve_EH(p_AD)
-        println(AD, period)
+        #println(AD, period)
         output = extract_for_AD_period(AD, period)
         bg_dict = output.bg_dict
 
@@ -888,7 +901,6 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
 
         function background_counts(params)
-            T = eltype(params.eres_a)
             eff_livetime = output.eff_livetime
             accidentals = bg_dict["accidentals"]
 
@@ -939,7 +951,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             # transform from Escint to Evis by lsnl and relative energy scale (set the latter to unity for now)
             # two options: either transform bin edges and divide by shifted bin edges to get pdf, or shift at bin centers, multiply with differential 
 
-            E_vis = @. lsnl(fine_Edep_c) * fine_Edep_c
+            E_vis = @. lsnl(fine_binning_Edep_c) * fine_binning_Edep_c
             E_vis_edges = @. lsnl(fine_binning_Edep) * fine_binning_Edep;
 
             # get energy resolution 
@@ -965,7 +977,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         end
 
         neutrino_models[p_AD] = neutrino_counts
-        break
+        # break
     
     end
 
@@ -973,7 +985,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            break
+            # break
         end
         expected = vcat(output...)
         distprod(Poisson.(expected))
@@ -984,52 +996,83 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
 end
 
-function get_plot(physics, assets)
+  
+ function get_plot(physics, assets)
 
     function plot(params, data=assets.observed)
-        
+
         m = mean(get_forward_model(physics, assets)(params))
-        v = var(get_forward_model(physics, assets)(params))
+        v = var(get_forward_mdoel(physics, assets)(params))
+        
+        detector_list = assets.detector_list
+                # number of analysis bins
+        n_ana_binning = length(assets.coarse_binning_c)
 
-        size_per_EH = length(data) / 3
+        EH1_obs = zeros(n_ana_binning)
+        EH2_obs = zeros(n_ana_binning)
+        EH3_obs = zeros(n_ana_binning)
+
+        EH1_mean = zeros(n_ana_binning)
+        EH2_mean = zeros(n_ana_binning)
+        EH3_mean = zeros(n_ana_binning)
+
+        EH1_var = zeros(n_ana_binning)
+        EH2_var = zeros(n_ana_binning)
+        EH3_var = zeros(n_ana_binning)
+
+        mean = [EH1_mean, EH2_mean, EH3_mean]
+        var = [EH1_mean, EH2_mean, EH3_mean]
+        obs = [EH1_obs, EH2_obs, EH3_obs]
+
+
+        for (c, p_AD) in enumerate(detector_list)
+            EH = Newtrinos.dayabay_rewrite.retrieve_EH(p_AD)
+            if EH == 1
+                EH1_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH1_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH1_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+            elseif EH == 2
+                EH2_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH2_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH2_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+            elseif EH ==3
+                EH3_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+                EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
+            end
+
+        end
     
-        f = Figure()
-
-        for i in 1:3
-            ax = Axis(f[1,1])
-            
-            plot!(ax, assets.energy, data, color=:black, label="Observed")
-            stephist!(ax, assets.energy, weights=m, bins=assets.energy_bins, label="Expected")
-            barplot!(ax, assets.energy, m .+ sqrt.(v), width=diff(assets.energy_bins), gap=0, fillto= m .- sqrt.(v), alpha=0.5, label="Standard Deviation")
-            
-            ax.ylabel="Counts"
-            ax.title="Daya Bay"
+        for (c, (m, v, o)) in enumerate(zip(mean, var, obs))
+            f = Figure()
+            ax = Axis(f[1, 1])
+            plot!(ax, assets.coarse_binning_c, o ./ assets.coarse_bin_width, label="Observed", color=:black)
+            stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
+            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)) ./ assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
-            
-            
-            ax2 = Axis(f[2,1])
-            plot!(ax2, assets.energy, data ./ m, color=:black, label="Observed")
-            hlines!(ax2, 1, label="Expected")
-            barplot!(ax2, assets.energy, 1 .+ sqrt.(v) ./ m, width=diff(assets.energy_bins), gap=0, fillto= 1 .- sqrt.(v)./m, alpha=0.5, label="Standard Deviation")
-            ylims!(ax2, 0.9, 1.1)
-            
+
             ax.xticksvisible = false
             ax.xticklabelsvisible = false
-            
-            rowsize!(f.layout, 1, Relative(3/4))
+
+            ax2 = Axis(f[2, 1])
+
+            plot!(ax2, assets.coarse_binning_c, o ./ m, color=:black, label="Observed")
+            hlines!(ax2, 1, label="Expected")
+            barplot!(ax2, assets.coarse_binning_c, 1 .+ sqrt.(v) ./ m, width=assets.coarse_bin_width, gap=0, fillto= 1 .- sqrt.(v)./m, alpha=0.5, label="Standard Deviation")
+
+
             rowgap!(f.layout, 1, 0)
-            
+            rowsize!(f.layout, 1, Relative(3/4))
+
             ax2.xlabel="Eₚ (MeV)"
             ax2.ylabel="Counts/Expected"
-        
-            xlims!(ax, minimum(assets.energy_bins), maximum(assets.energy_bins))
-            xlims!(ax2, minimum(assets.energy_bins), maximum(assets.energy_bins))
-            
-            ylims!(ax, 0, 60000)
+
+            xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
+            xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
+
+
+            save("EH_$(c).png", f)
         end
-        
-        f
-    
     end
 end
 
