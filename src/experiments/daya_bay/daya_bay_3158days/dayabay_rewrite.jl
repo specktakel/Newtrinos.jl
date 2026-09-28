@@ -30,12 +30,12 @@ end
 function default_physics()
     osc = Newtrinos.osc.configure()
     xsec = Newtrinos.ibd_xsec.configure()
-    #flux = Newtrinos.reactor_flux.configure()
-    (; osc, xsec)#, flux)
+    flux = Newtrinos.reactor_flux.configure()
+    (; osc, xsec, flux)
 end
 
 function configure(physics=default_physics(), datadir = @__DIR__)
-    physics = (;physics.osc, physics.xsec)#, physics.flux)
+    physics = (;physics.osc, physics.xsec, physics.flux)
     assets = get_assets(datadir)
     return DayaBay(
         physics = physics,
@@ -609,7 +609,7 @@ function get_assets(datadir = @__DIR__)
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
         push!(observed, get_observed_counts(AD, period))
-        # break
+        break
     end
     
     observed = vcat(observed...)
@@ -692,7 +692,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     detector_list = assets.detector_list
 
     # TODO: move to physics
-    reactor_flux = get_reactor_flux(datadir)
+    reactor_flux = physics.flux.flux
     xsec_config = physics.xsec
     xsec = xsec_config.xsec
     xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale)
@@ -811,7 +811,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         end
 
         neutrino_models[p_AD] = neutrino_counts
-        # break
+        break
     
     end
 
@@ -819,7 +819,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            # break
+            break
         end
         expected = vcat(output...)
         distprod(Poisson.(expected))
@@ -836,7 +836,7 @@ end
     function plot(params, data=assets.observed)
 
         m = mean(get_forward_model(physics, assets)(params))
-        v = var(get_forward_mdoel(physics, assets)(params))
+        v = var(get_forward_model(physics, assets)(params))
         
         detector_list = assets.detector_list
                 # number of analysis bins
@@ -854,8 +854,8 @@ end
         EH2_var = zeros(n_ana_binning)
         EH3_var = zeros(n_ana_binning)
 
-        mean = [EH1_mean, EH2_mean, EH3_mean]
-        var = [EH1_mean, EH2_mean, EH3_mean]
+        _mean = [EH1_mean, EH2_mean, EH3_mean]
+        _var = [EH1_mean, EH2_mean, EH3_mean]
         obs = [EH1_obs, EH2_obs, EH3_obs]
 
 
@@ -874,10 +874,11 @@ end
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             end
+            break
 
         end
     
-        for (c, (m, v, o)) in enumerate(zip(mean, var, obs))
+        for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
             ax = Axis(f[1, 1])
             plot!(ax, assets.coarse_binning_c, o ./ assets.coarse_bin_width, label="Observed", color=:black)
@@ -906,6 +907,7 @@ end
 
 
             save("EH_$(c).png", f)
+            break
         end
     end
 end

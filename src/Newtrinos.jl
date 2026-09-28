@@ -44,6 +44,7 @@ include("utils/autodiff.jl")
 include("utils/helpers.jl")
 
 include("experiments/daya_bay/daya_bay_3158days/dayabay.jl")
+include("experiments/daya_bay/daya_bay_3158days/dayabay_rewrite.jl")
 include("experiments/minos/minos_sterile_16e20_POT/minos.jl")
 #include("experiments/icecube/deepcore_3y_highstats_sample_b/deepcore.jl")
 include("experiments/icecube/deepcore_9y_verification_sample/deepcore.jl")

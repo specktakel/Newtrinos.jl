@@ -9,12 +9,13 @@ using CSV
 using DataFrames
 using Distributions
 using HDF5
+import YAML
 using ..Newtrinos
 
 export ReactorFluxConfig, DayaBayFlux
 
 
-const datadir = joinpath(@__DIR__, "../experiments/dayabay/daya_bay_3158days")
+const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
 
 
 abstract type FluxModel end
@@ -22,6 +23,7 @@ abstract type FluxModel end
 
 @kwdef struct ReactorFluxConfig{F<:FluxModel}
     flux_model::F = DayaBayFlux()
+    datadir::String = datadir
 end
 
 
@@ -43,11 +45,15 @@ function configure(cfg::ReactorFluxConfig = ReactorFluxConfig())
         params = get_params(cfg.flux_model, datadir=cfg.datadir),
         priors = get_priors(cfg.flux_model, datadir=cfg.datadir),
         flux = get_flux(cfg.flux_model, datadir=cfg.datadir),
+        datadir = cfg.datadir
     )
 end
 
 
 function get_params(flux::DayaBayFlux; datadir = datadir)
+    # TODO: is this part of DayaBay experiment or the reactor flux itself? not sure where to put
+    # currently I define that we need 6 fluxes in here, but this is specific to the experiment
+    # re-using for e.g. Juno, we need a different number of reactors, for future Julian...
 
     ## energy per fission
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_energy_per_fission.yaml"))
