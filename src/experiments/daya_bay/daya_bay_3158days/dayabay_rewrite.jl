@@ -69,7 +69,7 @@ mask_6 =     [true,   true,   true,   false,  true,   true,   true,   false]
 mask_8 =     [true,   true,   true,   true,   true,   true,   true,   true]
 mask_7 =     [false,  true,   true,   true,   true,   true,   true,   true]
 
-baselines = YAML.load_file("dayabay_data/parameters/baselines.yaml")
+baselines = YAML.load_file(joinpath(@__DIR__, "dayabay_data/parameters/baselines.yaml"))
 reactors = ["R$(i)" for i in 1:6]
 baselines["parameters"]["baseline"]
 
@@ -695,7 +695,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     reactor_flux = physics.flux.flux
     xsec_config = physics.xsec
     xsec = xsec_config.xsec
-    xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls)
+    xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spectrum_pulls) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spectrum_pulls)
     n_protons = get_proton_number(datadir)
     
     
@@ -765,7 +765,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             integrated_spectrum = zeros(T, length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
             for i in 1:6   # loop over reactors
                 # TODO: add multiplication with oscillation as function of L
-                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params.fission_fractions_scale, params.spec_pulls)
+                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params.fission_fractions_scale, params.spectrum_pulls)
                 integrated_spectrum_per_reactor = T[]
                 for (l, h) in zip(fine_binning_Enu[1:end-1], fine_binning_Enu[2:end]) 
                     domain = (l, h)
