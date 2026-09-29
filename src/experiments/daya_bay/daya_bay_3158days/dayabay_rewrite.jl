@@ -275,7 +275,15 @@ function get_lsnl_correction(datadir = @__DIR__)
     lsnl = read_lsnl_correction(datadir)
     #interp = Interpolator(lsnl.E, lsnl.f_nom, extrapolate=true)
     #func(E) = isnan(interp(E)) ? 0.0 : interp(E)
-    interp = linear_interpolation(lsnl.E, lsnl.f_nom, extrapolation_bc=Flat())
+    pull1 = linear_interpolation(lsnl.E, lsnl.rel_0, extrapolation_bc=Flat())
+    pull2 = linear_interpolation(lsnl.E, lsnl.rel_1, extrapolation_bc=Flat())
+    pull3 = linear_interpolation(lsnl.E, lsnl.rel_2, extrapolation_bc=Flat())
+    pull4 = linear_interpolation(lsnl.E, lsnl.rel_3, extrapolation_bc=Flat())
+    nom = linear_interpolation(lsnl.E, lsnl.f_nom, extrapolation_bc=Flat())
+
+    function lsnl(E, pull)
+        return @. nom(E) + pull[1] * pull1(E) + pull[2] * pull2(E) + pull[3] * pull3(E) + pull[4] * pull4(E)
+    end
 end
 
 
@@ -426,6 +434,7 @@ function get_params(datadir = @__DIR__)
         eff_eres_AD32,
         eff_eres_AD33,
         eff_eres_AD34,
+        lsnl_pull,
         iav_offdiag_scale
     )
     return params
@@ -556,6 +565,7 @@ function get_priors(datadir = @__DIR__)
         eff_eres_AD32=eff_eres_AD32,
         eff_eres_AD33=eff_eres_AD33,
         eff_eres_AD34=eff_eres_AD34,
+        lsnl_pull,
         iav_offdiag_scale=iav_offdiag_scale,   # done
     )
 end
@@ -790,8 +800,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             # transform from Escint to Evis by lsnl and relative energy scale (set the latter to unity for now)
             # two options: either transform bin edges and divide by shifted bin edges to get pdf, or shift at bin centers, multiply with differential 
 
-            E_vis = @. lsnl(fine_binning_Edep_c) * fine_binning_Edep_c
-            E_vis_edges = @. lsnl(fine_binning_Edep) * fine_binning_Edep;
+            E_vis = lsnl(fine_binning_Edep_c, params.lsnl_pull) .* fine_binning_Edep_c
+            E_vis_edges = lsnl(fine_binning_Edep, params.lsnl_pull) .* fine_binning_Edep;
 
             # get energy resolution 
             sigma_E = eres(E_vis, params.eres_a, params.eres_b, params.eres_c);
