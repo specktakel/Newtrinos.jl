@@ -10,6 +10,7 @@ using DataFrames
 using Distributions
 using HDF5
 import YAML
+using DelimitedFiles
 using ..Newtrinos
 
 export ReactorFluxConfig, DayaBayFlux
@@ -72,11 +73,13 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
 
     names = data["correlations"]["fission_fractions_scale"]["names"]
     fission_fractions_scale = collect([Float64(fraction_scale[name][1]) for name in names])
+    spec_pulls = ones(19)
 
     params = (;
         energy_per_fission,
         reactor_thermal_power_scale,
         fission_fractions_scale,
+        spec_pulls,
     )
     return params
 end
@@ -130,10 +133,13 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
     cov_mat = corr_mat .* scale
     fission_fractions_scale = Distributions.MvNormal(mu, cov_mat)
 
+    spec_pulls = Distributions.MvNormal(ones(19), Diagonal(ones(19)))
+
     priors = (;
         energy_per_fission,
         reactor_thermal_power_scale,
         fission_fractions_scale,
+        spec_pulls,
     )
 
 end
@@ -210,13 +216,71 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
     GJ_to_MeV = 1e9 / elementary_charge * 1e-6 # reactor thermal power in GW, energy per fission in MeV
     # all spectra in MeV, hence get rid of the GJ
 
-    function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale)
+
+    # prelim flux shape correction
+    spec_edges = convert(Array{Float64, 1}, readdlm(joinpath(datadir, "dayabay_data/parameters/reactor_antineutrino_spectrum_edges.tsv"))[2:end])
+    spec_edges = convert(Array{Float64, 1}, readdlm(joinpath("dayabay_data/parameters/reactor_antineutrino_spectrum_edges.tsv"))[2:end])
+    println(length(spec_edges))
+    width = diff(spec_edges)
+    push!(spec_edges, spec_edges[end] + width[end])
+    insert!(spec_edges, 1, spec_edges[1] - width[1])
+    println(length(spec_edges))
+    E = collect(LinRange(1, 12, 1000))
+
+    nodes = Diagonal(ones(length(spec_edges)))
+    node_itp = []
+    for i in 2:length(spec_edges) - 1
+        interp = Interpolator(spec_edges, nodes[i, :])
+        if i > 2 && i < length(spec_edges) - 1
+            function func_a(E)
+                val = interp(E)
+                if val > 0.0
+                    return val
+                else
+                    return 0.0
+                end
+            end
+            push!(node_itp, func_a)
+        elseif i == 2
+            function func_b(E)
+                val = interp(E)
+                if E <= spec_edges[2]
+                    return interp(spec_edges[2])
+                elseif val > 0.0
+                    return val
+                else
+                    return 0.0
+                end
+            end
+            push!(node_itp, func_b)
+        elseif i == length(spec_edges) - 1
+            function func_c(E)
+                val = interp(E)
+                if val > 0.0
+                    return val
+                elseif E >= spec_edges[end-1]
+                    return interp(spec_edges[end-1])
+                else
+                    return 0.0
+                end
+            end
+            push!(node_itp, func_c)
+        else
+            println(i)
+        end
+    end
+
+    function correction(E, pulls)
+        return sum([pull * itp.(E) for (pull, itp) in zip(pulls, node_itp)])
+    end
+
+    function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls)
         
         flux = GJ_to_MeV * thermal_power_scale * nominal_thermal_power * sum([
             nu_per_fission[iso] * fission_fractions_scale[i] * fractions[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]
             ) / sum(
                 [fission_fractions_scale[i]  * energy_per_fission[i] for (i, iso) in enumerate(names)]
-            )
+            ) .* correction(E, pulls)
     end
 
     reactor_flux
