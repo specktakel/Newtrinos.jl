@@ -1,25 +1,31 @@
+using LinearAlgebra
 using Test
 using Newtrinos
 
 @testset "DayaBay" begin
     db = Newtrinos.dayabay_rewrite.configure()
     @testset "IAV" begin
-        iav = Newtrinos.dayabay_rewrite.get_iav_matrix()
+        iav_func = Newtrinos.dayabay_rewrite.get_iav_matrix()
+        iav = iav_func(1.0)
         N = size(iav)[1]
         for i in 1:20
             delta = zeros(N)
             delta[i] = 1.0
             @test isapprox(sum(iav[:, i]), 0.0)
             @test isapprox(sum(iav * delta), 0.0)
+            break
         end
         for i in 21:N
             delta = zeros(N)
             delta[i] = 1.0
             @test isapprox(sum(iav[:, i]), 1.0)
             @test isapprox(sum(iav * delta), 1.0)
+            break
         end
-
-        # TODO: offdiagonal
+        scaled = iav_func(2)
+        @test isapprox(scaled[1:99, 100], 2.0 .* iav[1:99, 100])
+        @test isapprox(scaled[101:end, 100], 2.0 .* iav[101:end, 100])
+        @test isapprox(Diagonal(iav_func(1.0)), Diagonal(iav_func(2.0)))
     end
 
     @testset "LSNL" begin
@@ -53,5 +59,6 @@ using Newtrinos
         @test length(params.alpha_n_rate) == length(assets.detectors_6AD) + length(assets.detectors_8AD) + length(assets.detectors_7AD)
         @test length(params.fast_n_unc_scale) == length(assets.EH_list) * length(assets.period_list)
         @test length(params.lihe_unc_scale) == length(assets.EH_list) * length(assets.period_list)
+        @test length(params.iav_offdiag_scale) == length(assets.df_exp[!, "AD"])
     end
 end

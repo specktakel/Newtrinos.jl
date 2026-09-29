@@ -222,9 +222,17 @@ end
 function get_iav_matrix(datadir = @__DIR__)
     file = h5open(joinpath(datadir, "dayabay_data/detector_iav_matrix.hdf5"))
 
-    iav = file["iav_matrix"][]    # sums in dim=2 to 1
+    iav = transpose(file["iav_matrix"][])
     close(file)
-    transpose(iav)   # multiply with vector of spectrum from r.h.s. -> smeared spectrum
+    # multiply with vector of spectrum from r.h.s. -> smeared spectrum
+
+    diag_iav = Diagonal(iav)
+
+    function off_diag_scaled_iav(offdiag_scale)
+        offdiag_scale .* iav .- (offdiag_scale - 1) .* diag_iav
+    end
+
+    off_diag_scaled_iav
 end
 
 function read_lsnl_correction(datadir = @__DIR__)
@@ -699,7 +707,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     n_protons = get_proton_number(datadir)
     
     
-    iav = get_iav_matrix(datadir)
+    iav_func = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
 
@@ -778,8 +786,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
             integrated_spectrum .*= 1e-45 * output.eff_livetime_seconds * n_p ## m2 (from xsec) * lifetime * AD's proton number
 
-
-            smeared_spectrum = iav * integrated_spectrum;
+            
+            smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx]) * integrated_spectrum;
 
 
             # transform from Escint to Evis by lsnl and relative energy scale (set the latter to unity for now)
