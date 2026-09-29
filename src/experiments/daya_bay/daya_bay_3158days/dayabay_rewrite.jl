@@ -805,8 +805,12 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
             # get energy resolution 
             sigma_E = eres(E_vis, params.eres_a, params.eres_b, params.eres_c);
+            
+            # get relative efficiency and energy scale
+            key = Symbol("eff_eres_AD$(AD)")
+            eff_eres = params[key]
 
-            resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, width=20);
+            resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, E_scale=eff_eres[2], width=20);
             # Divide by bin width to get approximate pdf for integration over arbitrary bins
             spectrum_pdf = resolved_spectrum ./ diff(E_vis_edges)
             spectrum_integrated_coarse = T[]
@@ -821,7 +825,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                 sol = solve(prob, QuadGKJL())
                 push!(spectrum_integrated_coarse, sol.u)
             end
-            spectrum_integrated_coarse
+            eff_eres[1] .* spectrum_integrated_coarse
         end
 
         neutrino_models[p_AD] = neutrino_counts
