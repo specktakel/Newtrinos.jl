@@ -106,7 +106,7 @@ function get_observed_counts(AD::Int, period::Int, datadir = @__DIR__)
 
     coarse_binning = readdlm(joinpath(datadir, "dayabay_data/parameters/final_erec_bin_edges.tsv"))[2:end];
     coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
-    coarse_bin_width = (coarse_binning[2:end] - coarse_binning[1:end-1])
+    coarse_bin_width = diff(coarse_binning)
 
     rebin_idx = searchsortedlast.(Ref(coarse_binning), E_center_MeV)
 
@@ -136,7 +136,7 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
 
     coarse_binning = readdlm(joinpath(datadir, "dayabay_data/parameters/final_erec_bin_edges.tsv"))[2:end];
     coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
-    coarse_bin_width = (coarse_binning[2:end] - coarse_binning[1:end-1])
+    coarse_bin_width = diff(coarse_binning)
 
     rebin_idx = searchsortedlast.(Ref(coarse_binning), E_center_MeV)
 
@@ -379,7 +379,7 @@ function get_params(datadir = @__DIR__)
 
 
     ## energy resolution, shared across all ADs
-    dict = YAML.load_file("dayabay_data/parameters/detector_eres.yaml")
+    dict = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/detector_eres.yaml"))
     a_nom = dict["parameters"]["eres"]["a_nonuniform"][1]
     b_nom = dict["parameters"]["eres"]["b_stat"][1]
     c_nom = dict["parameters"]["eres"]["c_noise"][1]
@@ -792,9 +792,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             sigma_E = eres(E_vis, params.eres_a, params.eres_b, params.eres_c);
 
             resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, width=20);
-            spectrum_pdf = resolved_spectrum ./ (E_vis_edges[2:end] - E_vis_edges[1:end-1])
-
-            
+            # Divide by bin width to get approximate pdf for integration over arbitrary bins
+            spectrum_pdf = resolved_spectrum ./ diff(E_vis_edges)
             spectrum_integrated_coarse = T[]
             interpolated_pdf = Interpolator(E_vis, spectrum_pdf)
             interp(E) = isnan(interpolated_pdf(E)) ? 0 : interpolated_pdf(E)
