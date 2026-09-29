@@ -1,4 +1,5 @@
 using LinearAlgebra
+using HDF5
 using Test
 using Newtrinos
 
@@ -30,10 +31,13 @@ using Newtrinos
 
     @testset "LSNL" begin
         lsnl_data = Newtrinos.dayabay_rewrite.read_lsnl_correction()
-        lsnl_interp = Newtrinos.dayabay_rewrite.get_lsnl_correction()
-        @test isapprox(lsnl_interp.(lsnl_data.E), lsnl_data.f_nom)
+        lsnl = Newtrinos.dayabay_rewrite.get_lsnl_correction()
+        @test isapprox(lsnl(lsnl_data.E, [0, 0, 0, 0]), lsnl_data.f_nom)
+        @test isapprox(lsnl(lsnl_data.E, [1, 0, 0, 0]), lsnl_data.f_nom .+ lsnl_data.rel_0)
+        @test isapprox(lsnl(lsnl_data.E, [0, 1, 0, 0]), lsnl_data.f_nom .+ lsnl_data.rel_1)
+        @test isapprox(lsnl(lsnl_data.E, [0, 0, 1, 0]), lsnl_data.f_nom .+ lsnl_data.rel_2)
+        @test isapprox(lsnl(lsnl_data.E, [0, 0, 0, 1]), lsnl_data.f_nom .+ lsnl_data.rel_3)
 
-        #TODO pull curves
     end
 
     @testset "ERES" begin
@@ -60,5 +64,6 @@ using Newtrinos
         @test length(params.fast_n_unc_scale) == length(assets.EH_list) * length(assets.period_list)
         @test length(params.lihe_unc_scale) == length(assets.EH_list) * length(assets.period_list)
         @test length(params.iav_offdiag_scale) == length(assets.df_exp[!, "AD"])
+        @test length(params.lsnl_pull) == 4
     end
 end
