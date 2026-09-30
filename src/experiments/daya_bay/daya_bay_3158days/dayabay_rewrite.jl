@@ -624,11 +624,13 @@ function get_assets(datadir = @__DIR__)
     end
 
     observed = []
-    for p_AD in detector_list
+    for (c, p_AD) in enumerate(detector_list)
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
         push!(observed, get_observed_counts(AD, period))
-        # break
+        if c == 2
+            break
+        end
     end
     
     observed = vcat(observed...)
@@ -740,6 +742,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     iav_func = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
+    osc = physics.osc
 
     coarse_binning = assets.coarse_binning
     coarse_binning_c = assets.coarse_binning_c
@@ -807,6 +810,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         L = collect(df_exp[ad_idx, [:R1, :R2, :R3, :R4, :R5, :R6]])
         L2 = 4 * pi .* L.^2;
         n_p = n_protons["AD$(AD)"]
+        L_km = 1e-3 .* L
 
         lt = output.eff_livetime
         accidentals = bg_dict["accidentals"]
@@ -822,7 +826,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         amc_base = lt * amc.rate .* amc.shape
         lihe_base = lt * lihe.rate .* lihe.shape
         fast_n_base = lt * fast_n.rate .* fast_n.shape
-        alpha_n_base = lt * alpha_n.rate .* alpha_n.shape
+        alpha_n_base = lt .* alpha_n.shape
 
         function background_counts(params)
 
@@ -867,6 +871,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
             wff = @. iso_weights * ffs
 
+            surv_prob = osc.osc_prob(fine_binning_Enu_c, L_km, params, anti=true)[:, :, 1, 1]
+
             # distance-weighted sum of all reactor spectra, from the precomputed shape table
             # TODO: add multiplication with oscillation as function of L (per-reactor scalar factor)
             spec = zeros(T, NF)
@@ -877,7 +883,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                     @inbounds for k in 1:n_pulls
                         s += pulls[k] * (wff[1] * M[1, k, b] + wff[2] * M[2, k, b] + wff[3] * M[3, k, b] + wff[4] * M[4, k, b])
                     end
-                    spec[b] += A * s
+                    # energy at index b is fine_binning_Enu_c[b]
+                    # get survival prob at that energy given the params and distance of the reactor r
+                    spec[b] += A * s * surv_prob[b, r]
                 end
             end
 
@@ -909,7 +917,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                 for j2 in jlo:jhi
                     ov = min(h, E_vis_edges[j2 + 1]) - max(l, E_vis_edges[j2])
                     if ov > zero(T)
-                        s += spectrum_pdf[j2] * ov
+                        s += spectrum_pdf[j2]
                     end
                 end
                 coarse_counts[j] = s
@@ -918,7 +926,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         end
 
         neutrino_models[p_AD] = neutrino_counts
-        # break
+        if idx == 2
+            break
+        end
     
     end
 
@@ -926,7 +936,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            # break
+            if c == 2
+                break
+            end
         end
         expected = vcat(output...)
         distprod(Poisson.(expected))
@@ -981,7 +993,9 @@ end
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             end
-            break
+            if c == 2
+                break
+            end
 
         end
     
@@ -1014,7 +1028,9 @@ end
 
 
             save("EH_$(c).png", f)
-            break
+            if c == 2 
+                break
+            end
         end
     end
 end
