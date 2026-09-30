@@ -96,7 +96,7 @@ function get_observed_counts(AD::Int, period::Int, datadir = @__DIR__)
     file = h5open(spectrum_path, "r")
 
     counts_ibd = Int64[]
-    E_bins_MeV = []
+    E_bins_MeV = Float64[]
 
     foreach(x -> push!(counts_ibd, x.N), file["ibd_spectrum_AD$(AD)"][1:end])
     foreach(x -> push!(E_bins_MeV, x.E_min_MeV), file["ibd_spectrum_AD$(AD)"][1:end])
@@ -125,7 +125,7 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     spectrum_path = joinpath(datadir, data_basepath, "dayabay_ibd_spectra_$(period)AD.hdf5")
     file = h5open(spectrum_path, "r")
 
-    E_bins_MeV = []
+    E_bins_MeV = Float64[]
 
     foreach(x -> push!(E_bins_MeV, x.E_min_MeV), file["ibd_spectrum_AD$(AD)"][1:end])
     push!(E_bins_MeV, file["ibd_spectrum_AD$(AD)"][end].E_max_MeV)
@@ -144,11 +144,11 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     # extract background shapes
     bg_shape_path = joinpath(datadir, data_basepath, "dayabay_background_spectra_$(period)AD.hdf5")
     file = h5open(bg_shape_path)
-    _shape_accidental = []
-    _shape_alpha_neutron = []
-    _shape_amc = []
-    _shape_fast_neutrons = []
-    _shape_lithium_helium = []
+    _shape_accidental = Float64[]
+    _shape_alpha_neutron = Float64[]
+    _shape_amc = Float64[]
+    _shape_fast_neutrons = Float64[]
+    _shape_lithium_helium = Float64[]
 
     foreach(x -> push!(_shape_accidental, x.N), file["spectrum_shape_accidentals_AD$(AD)"][1:end])
     foreach(x -> push!(_shape_alpha_neutron, x.N), file["spectrum_shape_alpha_neutron_AD$(AD)"][1:end])
@@ -157,11 +157,11 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     foreach(x -> push!(_shape_lithium_helium, x.N), file["spectrum_shape_lithium_helium_AD$(AD)"][1:end])
     close(file)
 
-    shape_accidental = []
-    shape_alpha_neutron = []
-    shape_amc = []
-    shape_fast_neutrons = []
-    shape_lithium_helium = []
+    shape_accidental = Float64[]
+    shape_alpha_neutron = Float64[]
+    shape_amc = Float64[]
+    shape_fast_neutrons = Float64[]
+    shape_lithium_helium = Float64[]
     for i in 1:length(coarse_binning_c)
         push!(shape_accidental, sum(_shape_accidental[rebin_idx.==i]))
         push!(shape_alpha_neutron, sum(_shape_alpha_neutron[rebin_idx.==i]))
@@ -189,9 +189,9 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     # daily detector data: lifetime + daily rate for accidentals
     daily_path = joinpath(datadir, data_basepath, "dayabay_daily_detector_data.hdf5")
     data = h5open(daily_path)
-    eff_livetime = []
-    acc_rate = []
-    livetime = []
+    eff_livetime = Float64[]
+    acc_rate = Float64[]
+    livetime = Float64[]
     foreach(x -> x[:n_det] == period ? push!(eff_livetime, x[:eff_livetime]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(acc_rate, x[:rate_accidentals]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(livetime, x[:livetime]) : 0, data["AD$(AD)"][1:end])
@@ -606,7 +606,7 @@ function get_assets(datadir = @__DIR__)
 
     # detector_list = vcat(full_setup[mask_6], full_setup[mask_8], full_setup[mask_7])
 
-    period_EH_list = []
+    period_EH_list = Float64[]
     for p in period_list
         for EH in EH_list
             push!(period_EH_list, "$(p)_$(EH)")
@@ -625,7 +625,7 @@ function get_assets(datadir = @__DIR__)
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
         push!(observed, get_observed_counts(AD, period))
-        break
+        # break
     end
     
     observed = vcat(observed...)
@@ -747,29 +747,33 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         L2 = 4 * pi .* L.^2;
         n_p = n_protons["AD$(AD)"]
 
+        lt = output.eff_livetime
+        accidentals = bg_dict["accidentals"]
 
+        amc = bg_dict["amc"]
+        lihe = bg_dict["lithium_helium"]
+        fast_n = bg_dict["fast_neutrons"]
+        alpha_n = bg_dict["alpha_neutron"]
+        period_EH_idx = findfirst(x-> x == "$(period)AD_$(EH)", assets.period_EH_list)
+        @assert period_EH_idx !== nothing
+
+        acc_base = lt * accidentals.rate .* accidentals.shape
+        amc_base = lt * amc.rate .* amc.shape
+        lihe_base = lt * lihe.rate .* lihe.shape
+        fast_n_base = lt * fast_n.rate .* fast_n.shape
+        alpha_n_base = lt * alpha_n.rate .* alpha_n.shape
 
         function background_counts(params)
-            eff_livetime = output.eff_livetime
-            accidentals = bg_dict["accidentals"]
-
-            amc = bg_dict["amc"]
-            lihe = bg_dict["lithium_helium"]
-            fast_n = bg_dict["fast_neutrons"]
-            alpha_n = bg_dict["alpha_neutron"]
 
             ## background stuff
             # part of forward model
-            acc_counts = eff_livetime * accidentals.rate * params.acc_scale[idx] .* accidentals.shape 
-            amc_counts = eff_livetime * amc.rate * (1 + amc.uncertainty * params.amc_unc_scale) .* amc.shape
-            period_EH_idx = findall(x-> x == "$(period)AD_$(EH)", assets.period_EH_list)[1]
-            lihe_counts = eff_livetime * lihe.rate * (1 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]) .* lihe.shape
+            _acc = params.acc_scale[idx]
+            _amc = 1 + amc.uncertainty * params.amc_unc_scale
+            _lihe = 1 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]
+            _fast_n = 1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]
+            _alpha_n = params.alpha_n_rate[idx]
 
-            fast_n_counts = eff_livetime * fast_n.rate * (1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]) .* fast_n.shape
-
-            alpha_n_counts = eff_livetime * alpha_n.rate .* alpha_n.shape;
-
-            return @. acc_counts + amc_counts + lihe_counts + fast_n_counts + alpha_n_counts
+            return @. acc_base * _acc + amc_base * _amc + lihe_base * _lihe + fast_n_base * _fast_n + alpha_n_base * _alpha_n
         end
         background_models[p_AD] = background_counts
   
@@ -829,7 +833,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         end
 
         neutrino_models[p_AD] = neutrino_counts
-        break
+        # break
     
     end
 
@@ -837,7 +841,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            break
+            # break
         end
         expected = vcat(output...)
         distprod(Poisson.(expected))
