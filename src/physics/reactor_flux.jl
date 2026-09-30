@@ -73,13 +73,13 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
 
     names = data["correlations"]["fission_fractions_scale"]["names"]
     fission_fractions_scale = collect([Float64(fraction_scale[name][1]) for name in names])
-    spec_pulls = ones(19)
+    spectrum_pulls = ones(19)
 
     params = (;
         energy_per_fission,
         reactor_thermal_power_scale,
         fission_fractions_scale,
-        spec_pulls,
+        spectrum_pulls,
     )
     return params
 end
@@ -133,13 +133,13 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
     cov_mat = corr_mat .* scale
     fission_fractions_scale = Distributions.MvNormal(mu, cov_mat)
 
-    spec_pulls = Distributions.MvNormal(ones(19), Diagonal(ones(19)))
+    spectrum_pulls = Distributions.MvNormal(ones(19), Diagonal(ones(19)))
 
     priors = (;
         energy_per_fission,
         reactor_thermal_power_scale,
         fission_fractions_scale,
-        spec_pulls,
+        spectrum_pulls,
     )
 
 end
@@ -219,7 +219,6 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
 
     # prelim flux shape correction
     spec_edges = convert(Array{Float64, 1}, readdlm(joinpath(datadir, "dayabay_data/parameters/reactor_antineutrino_spectrum_edges.tsv"))[2:end])
-    spec_edges = convert(Array{Float64, 1}, readdlm(joinpath("dayabay_data/parameters/reactor_antineutrino_spectrum_edges.tsv"))[2:end])
     println(length(spec_edges))
     width = diff(spec_edges)
     push!(spec_edges, spec_edges[end] + width[end])
