@@ -219,11 +219,9 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
 
     # prelim flux shape correction
     spec_edges = convert(Array{Float64, 1}, readdlm(joinpath(datadir, "dayabay_data/parameters/reactor_antineutrino_spectrum_edges.tsv"))[2:end])
-    println(length(spec_edges))
     width = diff(spec_edges)
     push!(spec_edges, spec_edges[end] + width[end])
     insert!(spec_edges, 1, spec_edges[1] - width[1])
-    println(length(spec_edges))
     E = collect(LinRange(1, 12, 1000))
 
     nodes = Diagonal(ones(length(spec_edges)))

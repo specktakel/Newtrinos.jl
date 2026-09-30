@@ -490,8 +490,6 @@ function get_priors(datadir = @__DIR__)
     corr_mat = hcat(dict["correlations"]["detector_relative"]["matrix"]...)
     # correlation(i, j) = covariance(i, j) / sqrt(var_i * var_j)) -> invert to get covariance matrix for MvNormal
     cov_mat = corr_mat .* scale
-    #println(scale)
-    #println(cov_mat)
     eff_eres_nom = Vector([eff_nom, e_scale_nom])
     eff_eres_AD11 = Distributions.MvNormal(eff_eres_nom, cov_mat)
     eff_eres_AD12 = Distributions.MvNormal(eff_eres_nom, cov_mat)
@@ -723,7 +721,6 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         period = retrieve_period(p_AD)
         AD = retrieve_AD(p_AD)
         EH = retrieve_EH(p_AD)
-        #println(AD, period)
         output = extract_for_AD_period(AD, period)
         bg_dict = output.bg_dict
 
