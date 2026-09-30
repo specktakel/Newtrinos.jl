@@ -749,6 +749,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     coarse_bin_width = assets.coarse_bin_width
     fine_binning_Enu = assets.fine_binning_Enu
     fine_binning_Enu_c = assets.fine_binning_Enu_c
+    fine_binning_Enu_GeV = fine_binning_Enu_c ./ 1000   # convert to GeV from MeV for physics.osc.osc_prob
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
@@ -917,7 +918,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                 for j2 in jlo:jhi
                     ov = min(h, E_vis_edges[j2 + 1]) - max(l, E_vis_edges[j2])
                     if ov > zero(T)
-                        s += spectrum_pdf[j2]
+                        s += spectrum_pdf[j2] * ov
                     end
                 end
                 coarse_counts[j] = s
