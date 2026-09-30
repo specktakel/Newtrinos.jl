@@ -226,13 +226,16 @@ function get_iav_matrix(datadir = @__DIR__)
     close(file)
     # multiply with vector of spectrum from r.h.s. -> smeared spectrum
 
-    diag_iav = Diagonal(iav)
+    # M(s) = s .* iav - (s - 1) .* Diagonal(iav) = Diagonal(iav) + s .* (iav - Diagonal(iav))
+    # so M(s) * v needs only one matrix-vector product plus element-wise scales
+    diag_iav = vec(diag(iav))
+    off_iav = iav - Diagonal(iav)
 
-    function off_diag_scaled_iav(offdiag_scale)
-        offdiag_scale .* iav .- (offdiag_scale - 1) .* diag_iav
+    function apply_iav(offdiag_scale, v)
+        diag_iav .* v + offdiag_scale * (off_iav * v)
     end
 
-    off_diag_scaled_iav
+    apply_iav
 end
 
 function read_lsnl_correction(datadir = @__DIR__)
@@ -606,7 +609,7 @@ function get_assets(datadir = @__DIR__)
 
     # detector_list = vcat(full_setup[mask_6], full_setup[mask_8], full_setup[mask_7])
 
-    period_EH_list = Float64[]
+    period_EH_list = String[]
     for p in period_list
         for EH in EH_list
             push!(period_EH_list, "$(p)_$(EH)")
@@ -703,18 +706,37 @@ function energy_resolution(E, E_edges, eres_a, eres_b, eres_c; nσ = 6)
 end
 """
 
+# fixed Gauss-Legendre nodes/weights on each bin of `edges` (Golub-Welsch)
+function gl_nodes_weights(edges::AbstractVector{T}, n::Int) where {T<:Real}
+    NB = length(edges) - 1
+    J = zeros(n, n)
+    @inbounds for k in 2:n
+        J[k, k - 1] = J[k - 1, k] = k / sqrt(4k^2 - 1)
+    end
+    Ev = eigen(J)
+    x, w = Ev.values, 2.0 * Ev.vectors[1, :].^2
+    p = sortperm(x)
+    x, w = x[p], w[p]
+    nodes = Matrix{T}(undef, NB, n)
+    weights = Matrix{T}(undef, NB, n)
+    @inbounds for b in 1:NB
+        l, h = edges[b], edges[b + 1]
+        halfw = 0.5 * (h - l)
+        mid = 0.5 * (h + l)
+        nodes[b, :] = halfw .* x .+ mid
+        weights[b, :] = halfw .* w
+    end
+    nodes, weights
+end
+
+
 function get_forward_model(physics, assets, datadir = @__DIR__)
     df_exp = assets.df_exp
     detector_list = assets.detector_list
 
-    # TODO: move to physics
-    reactor_flux = physics.flux.flux
-    xsec_config = physics.xsec
-    xsec = xsec_config.xsec
-    xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls)
+    xsec = physics.xsec.xsec
     n_protons = get_proton_number(datadir)
-    
-    
+
     iav_func = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
@@ -727,6 +749,45 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
+
+    ## parameter-free flux-shape integrals M[iso, k, b] = ∫_{fine bin b} xsec(E) S_iso(E) C_k(E) dE
+    ## shared across all detectors; makes the per-call fine-grid integration a small dual-number combination
+    fluxb = Newtrinos.reactor_flux.flux_basis(physics.flux.cfg; datadir = physics.flux.datadir)
+    iso_names = fluxb.names
+    iso_weights = [fluxb.nu_per_fission[iso_names[i]] * fluxb.fractions[iso_names[i]] for i in 1:length(iso_names)]
+    iso_shapes = [fluxb.isotope_shapes[iso_names[i]] for i in 1:length(iso_names)]
+    n_iso = length(iso_names)
+    n_pulls = length(fluxb.correction_nodes)
+    spec_edges = fluxb.spec_edges
+    flux_const = fluxb.flux_const
+
+    NF = length(fine_binning_Enu) - 1
+    NFc = length(fine_binning_Edep_c)
+
+    qN = 24
+    qnodes, qweights = gl_nodes_weights(fine_binning_Enu, qN)
+
+    M = zeros(n_iso, n_pulls, NF)
+    @inbounds for k in 1:n_pulls
+        C_k = fluxb.correction_nodes[k]
+        # correction node k is a hat on [spec_edges[k], spec_edges[k+2]]
+        # (plateaued on the low side for k=1 and on the high side for k=n_pulls)
+        lo_k = k == 1 ? 0.0 : spec_edges[k]
+        hi_k = k == n_pulls ? Inf : spec_edges[k + 2]
+        bmin = clamp(searchsortedlast(fine_binning_Enu, lo_k), 1, NF)
+        bmax = clamp(searchsortedfirst(fine_binning_Enu, hi_k) - 1, bmin, NF)
+        @inbounds for b in bmin:bmax
+            for iso in 1:n_iso
+                S_iso = iso_shapes[iso]
+                s = 0.0
+                for q in 1:qN
+                    u = qnodes[b, q]
+                    s += qweights[b, q] * xsec(u) * S_iso(u) * C_k(u)
+                end
+                M[iso, k, b] = s
+            end
+        end
+    end
 
 
     ## create background model functions, taking parameter NamedTuple as arg
@@ -779,57 +840,81 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
   
 
 
+        eff_eres_key = Symbol("eff_eres_AD$(AD)")
+        invL2 = inv.(L2)
+        flux_norm = 1e-45 * output.eff_livetime_seconds * n_p * flux_const ## m2 (from xsec) * lifetime * AD's proton number
+
         function neutrino_counts(params)
-            T = eltype(params.eres_a)
-            integrated_spectrum = zeros(T, length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
-            for i in 1:6   # loop over reactors
-                # TODO: add multiplication with oscillation as function of L
-                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params.fission_fractions_scale, params.spectrum_pulls)
-                integrated_spectrum_per_reactor = T[]
-                for (l, h) in zip(fine_binning_Enu[1:end-1], fine_binning_Enu[2:end]) 
-                    domain = (l, h)
-                    prob = IntegralProblem(integrand, domain)
-                    sol = solve(prob, QuadGKJL())
-                    push!(integrated_spectrum_per_reactor, sol.u)
-                end
-                integrated_spectrum += integrated_spectrum_per_reactor ./ L2[i]
+            # value type promoted over all parameter inputs, so intermediate arrays
+            # stay dual even when only a subset of the parameters is dual
+            T = Base.promote_type(
+                eltype(params.eres_a),
+                eltype(params.fission_fractions_scale),
+                eltype(params.energy_per_fission),
+                eltype(params.spectrum_pulls),
+                eltype(params.reactor_thermal_power_scale),
+                eltype(params.lsnl_pull),
+                eltype(params.iav_offdiag_scale),
+            )
+            ffs = params.fission_fractions_scale
+            epf = params.energy_per_fission
+            pulls = params.spectrum_pulls
+
+            D = zero(T)
+            @inbounds for i in 1:n_iso
+                D += ffs[i] * epf[i]
             end
 
-            integrated_spectrum .*= 1e-45 * output.eff_livetime_seconds * n_p ## m2 (from xsec) * lifetime * AD's proton number
+            wff = @. iso_weights * ffs
 
-            
-            smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx]) * integrated_spectrum;
+            # distance-weighted sum of all reactor spectra, from the precomputed shape table
+            # TODO: add multiplication with oscillation as function of L (per-reactor scalar factor)
+            spec = zeros(T, NF)
+            @inbounds for r in 1:6
+                A = flux_norm * params.reactor_thermal_power_scale[r] / D * invL2[r]
+                @inbounds for b in 1:NF
+                    s = zero(T)
+                    @inbounds for k in 1:n_pulls
+                        s += pulls[k] * (wff[1] * M[1, k, b] + wff[2] * M[2, k, b] + wff[3] * M[3, k, b] + wff[4] * M[4, k, b])
+                    end
+                    spec[b] += A * s
+                end
+            end
 
+            smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx], spec);
 
             # transform from Escint to Evis by lsnl and relative energy scale (set the latter to unity for now)
-            # two options: either transform bin edges and divide by shifted bin edges to get pdf, or shift at bin centers, multiply with differential 
+            # single evaluation over centers and edges
+            scale_all = lsnl(vcat(fine_binning_Edep_c, fine_binning_Edep), params.lsnl_pull)
+            E_vis = scale_all[1:NFc] .* fine_binning_Edep_c
+            E_vis_edges = scale_all[NFc + 1:end] .* fine_binning_Edep
 
-            E_vis = lsnl(fine_binning_Edep_c, params.lsnl_pull) .* fine_binning_Edep_c
-            E_vis_edges = lsnl(fine_binning_Edep, params.lsnl_pull) .* fine_binning_Edep;
-
-            # get energy resolution 
+            # get energy resolution
             sigma_E = eres(E_vis, params.eres_a, params.eres_b, params.eres_c);
-            
+
             # get relative efficiency and energy scale
-            key = Symbol("eff_eres_AD$(AD)")
-            eff_eres = params[key]
+            eff_eres = params[eff_eres_key]
 
             resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, E_scale=eff_eres[2], width=20);
             # Divide by bin width to get approximate pdf for integration over arbitrary bins
             spectrum_pdf = resolved_spectrum ./ diff(E_vis_edges)
-            spectrum_integrated_coarse = T[]
-            interpolated_pdf = Interpolator(E_vis, spectrum_pdf)
-            interp(E) = isnan(interpolated_pdf(E)) ? 0 : interpolated_pdf(E)
 
-            integrand_coarse(E, u) = interp(E)
-
-            for (l, h) in zip(coarse_binning[1:end-1], coarse_binning[2:end])
-                domain = (l, h)
-                prob = IntegralProblem(integrand_coarse, domain)
-                sol = solve(prob, QuadGKJL())
-                push!(spectrum_integrated_coarse, sol.u)
+            # exact integration of the piecewise-constant pdf over the coarse bins
+            NC = length(coarse_binning) - 1
+            coarse_counts = zeros(T, NC)
+            @inbounds for (j, (l, h)) in enumerate(zip(coarse_binning[1:end-1], coarse_binning[2:end]))
+                s = zero(T)
+                jlo = clamp(searchsortedlast(E_vis_edges, l), 1, NFc)
+                jhi = clamp(searchsortedfirst(E_vis_edges, h) - 1, jlo, NFc)
+                for j2 in jlo:jhi
+                    ov = min(h, E_vis_edges[j2 + 1]) - max(l, E_vis_edges[j2])
+                    if ov > zero(T)
+                        s += spectrum_pdf[j2] * ov
+                    end
+                end
+                coarse_counts[j] = s
             end
-            eff_eres[1] .* spectrum_integrated_coarse
+            eff_eres[1] .* coarse_counts
         end
 
         neutrino_models[p_AD] = neutrino_counts

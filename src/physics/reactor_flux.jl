@@ -13,7 +13,7 @@ import YAML
 using DelimitedFiles
 using ..Newtrinos
 
-export ReactorFluxConfig, DayaBayFlux
+export ReactorFluxConfig, DayaBayFlux, flux_basis
 
 
 const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
@@ -174,8 +174,14 @@ end
 
 
 
-function get_flux(cfg::DayaBayFlux; datadir = datadir)
+"""
+    build_flux_components(cfg::DayaBayFlux; datadir = datadir)
 
+Build the parameter-free building blocks of the Daya Bay reactor flux model:
+isotope spectrum shapes, flux-shape correction node functions, and constants.
+Shared by [`get_flux`] and [`flux_basis`].
+"""
+function build_flux_components(cfg::DayaBayFlux; datadir = datadir)
     # get fission fractions for fixed weighting
     fractions = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_fission_fractions.yaml"))["parameters"]["fission_fractions"]
 
@@ -198,7 +204,7 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
 
     names = (:U235, :U238, :Pu239, :Pu241)
     funcs = [U_235, U_238, Pu_239, Pu_241]
-    fluxes = NamedTuple{names}(funcs)
+    isotope_shapes = NamedTuple{names}(funcs)
 
     # get nominal thermal power
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_thermal_power_nominal.yaml"))
@@ -222,7 +228,6 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
     width = diff(spec_edges)
     push!(spec_edges, spec_edges[end] + width[end])
     insert!(spec_edges, 1, spec_edges[1] - width[1])
-    E = collect(LinRange(1, 12, 1000))
 
     nodes = Diagonal(ones(length(spec_edges)))
     node_itp = []
@@ -240,10 +245,11 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
             push!(node_itp, func_a)
         elseif i == 2
             function func_b(E)
-                val = interp(E)
                 if E <= spec_edges[2]
                     return interp(spec_edges[2])
-                elseif val > 0.0
+                end
+                val = interp(E)
+                if val > 0.0
                     return val
                 else
                     return 0.0
@@ -252,11 +258,12 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
             push!(node_itp, func_b)
         elseif i == length(spec_edges) - 1
             function func_c(E)
+                if E >= spec_edges[end-1]
+                    return interp(spec_edges[end-1])
+                end
                 val = interp(E)
                 if val > 0.0
                     return val
-                elseif E >= spec_edges[end-1]
-                    return interp(spec_edges[end-1])
                 else
                     return 0.0
                 end
@@ -267,14 +274,59 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
         end
     end
 
+    (;
+        names,
+        fractions,
+        nu_per_fission,
+        isotope_shapes,
+        correction_nodes = node_itp,
+        spec_edges,
+        flux_const = GJ_to_MeV * nominal_thermal_power,
+    )
+end
+
+
+"""
+    flux_basis(cfg::ReactorFluxConfig; datadir = datadir)
+
+Parameter-free building blocks of the Daya Bay reactor flux model, for
+precomputing energy-shape integrals of a cross-section weighted flux.
+
+With `c_i = nu_per_fission[iso] * fractions[iso] * fission_fractions_scale_i(θ)`
+and `p_k = spectrum_pulls_k(θ)`, the cross-section weighted flux factorizes as
+
+    xsec(E) * flux(E, θ) = A(θ) * Σ_{i,k} c_i p_k * xsec(E) * S_iso(E) * C_k(E)
+
+with `A(θ) = flux_const * thermal_power_scale_r / Σ_i ffs_i * epf_i`, so the
+integral over any fixed energy bin `b` equals
+`A(θ) * Σ_k p_k * Σ_i c_i * M[i, k, b]` with the parameter-free table
+`M[i, k, b] = ∫_b xsec(E) * S_iso(E) * C_k(E) dE`.
+
+Fields:
+- `names` — isotope names, matching the order of `fission_fractions_scale` / `energy_per_fission`
+- `fractions`, `nu_per_fission` — fixed nominal fission fractions / antineutrinos per fission
+- `isotope_shapes` — parameter-free isotope spectrum functions `S_iso(E)` (zero outside the data range)
+- `correction_nodes` — vector of `K` correction node (hat/plateau) functions `C_k(E)`
+- `spec_edges` — node grid of the correction functions
+- `flux_const` — `GJ_to_MeV * nominal_thermal_power`
+"""
+function flux_basis(cfg::ReactorFluxConfig; datadir = datadir)
+    build_flux_components(cfg.flux_model; datadir = datadir)
+end
+
+
+function get_flux(cfg::DayaBayFlux; datadir = datadir)
+    c = build_flux_components(cfg; datadir)
+    names = c.names
+
     function correction(E, pulls)
-        return sum([pull * itp.(E) for (pull, itp) in zip(pulls, node_itp)])
+        return sum([pull * itp.(E) for (pull, itp) in zip(pulls, c.correction_nodes)])
     end
 
     function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls)
-        
-        flux = GJ_to_MeV * thermal_power_scale * nominal_thermal_power * sum([
-            nu_per_fission[iso] * fission_fractions_scale[i] * fractions[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]
+
+        flux = c.flux_const * thermal_power_scale * sum([
+            c.nu_per_fission[iso] * fission_fractions_scale[i] * c.fractions[iso] * c.isotope_shapes[iso].(E) for (i, iso) in enumerate(names)]
             ) / sum(
                 [fission_fractions_scale[i]  * energy_per_fission[i] for (i, iso) in enumerate(names)]
             ) .* correction(E, pulls)
