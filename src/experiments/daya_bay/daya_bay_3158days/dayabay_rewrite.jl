@@ -606,7 +606,7 @@ function get_assets(datadir = @__DIR__)
 
     # detector_list = vcat(full_setup[mask_6], full_setup[mask_8], full_setup[mask_7])
 
-    period_EH_list = Float64[]
+    period_EH_list = String[]
     for p in period_list
         for EH in EH_list
             push!(period_EH_list, "$(p)_$(EH)")
@@ -749,6 +749,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
         lt = output.eff_livetime
         accidentals = bg_dict["accidentals"]
+        
+        ffs_symbols = [Symbol("fission_fractions_scale_R$(i)") for i=1:6]
 
         amc = bg_dict["amc"]
         lihe = bg_dict["lithium_helium"]
@@ -778,13 +780,14 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         background_models[p_AD] = background_counts
   
 
+        
 
         function neutrino_counts(params)
             T = eltype(params.eres_a)
             integrated_spectrum = zeros(T, length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
             for i in 1:6   # loop over reactors
                 # TODO: add multiplication with oscillation as function of L
-                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params.fission_fractions_scale, params.spectrum_pulls)
+                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params[ffs_symbols[i]], params.spectrum_pulls)
                 integrated_spectrum_per_reactor = T[]
                 for (l, h) in zip(fine_binning_Enu[1:end-1], fine_binning_Enu[2:end]) 
                     domain = (l, h)

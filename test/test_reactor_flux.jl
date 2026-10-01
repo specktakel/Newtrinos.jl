@@ -17,9 +17,9 @@ using Newtrinos
         flux = reactor.flux
         params = reactor.params
         @reset params.reactor_thermal_power_scale = 1.0
-        flux_vals = flux(E, params.reactor_thermal_power_scale, params.energy_per_fission, params.fission_fractions_scale, params.spectrum_pulls)
+        flux_vals = flux(E, params.reactor_thermal_power_scale, params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls)
         @reset params.reactor_thermal_power_scale = 2.0
-        flux_val_higher = flux(E, params.reactor_thermal_power_scale, params.energy_per_fission, params.fission_fractions_scale, params.spectrum_pulls)
+        flux_val_higher = flux(E, params.reactor_thermal_power_scale, params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls)
         @test isapprox(flux_vals .* 2, flux_val_higher)
     end
 end

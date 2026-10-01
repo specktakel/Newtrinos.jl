@@ -72,13 +72,23 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
     fraction_scale = data["parameters"]["fission_fractions_scale"]
 
     names = data["correlations"]["fission_fractions_scale"]["names"]
-    fission_fractions_scale = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R1 = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R2 = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R3 = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R4 = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R5 = collect([Float64(fraction_scale[name][1]) for name in names])
+    fission_fractions_scale_R6 = collect([Float64(fraction_scale[name][1]) for name in names])
     spectrum_pulls = ones(19)
 
     params = (;
         energy_per_fission,
         reactor_thermal_power_scale,
-        fission_fractions_scale,
+        fission_fractions_scale_R1,
+        fission_fractions_scale_R2,
+        fission_fractions_scale_R3,
+        fission_fractions_scale_R4,
+        fission_fractions_scale_R5,
+        fission_fractions_scale_R6,
         spectrum_pulls,
     )
     return params
@@ -131,14 +141,24 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
 
 
     cov_mat = corr_mat .* scale
-    fission_fractions_scale = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R1 = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R2 = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R3 = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R4 = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R5 = Distributions.MvNormal(mu, cov_mat)
+    fission_fractions_scale_R6 = Distributions.MvNormal(mu, cov_mat)
 
     spectrum_pulls = Distributions.MvNormal(ones(19), Diagonal(ones(19)))
 
     priors = (;
         energy_per_fission,
         reactor_thermal_power_scale,
-        fission_fractions_scale,
+        fission_fractions_scale_R1,
+        fission_fractions_scale_R2,
+        fission_fractions_scale_R3,
+        fission_fractions_scale_R4,
+        fission_fractions_scale_R5,
+        fission_fractions_scale_R6,
         spectrum_pulls,
     )
 
