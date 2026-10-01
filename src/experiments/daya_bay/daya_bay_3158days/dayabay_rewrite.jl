@@ -759,7 +759,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         period_EH_idx = findfirst(x-> x == "$(period)AD_$(EH)", assets.period_EH_list)
         @assert period_EH_idx !== nothing
 
-        acc_base = lt * accidentals.rate .* accidentals.shape
+        acc_base = lt .* accidentals.shape
         amc_base = lt * amc.rate .* amc.shape
         lihe_base = lt * lihe.rate .* lihe.shape
         fast_n_base = lt * fast_n.rate .* fast_n.shape
