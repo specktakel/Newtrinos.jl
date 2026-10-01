@@ -712,10 +712,10 @@ end
 function gl_nodes_weights(edges::AbstractVector{T}, n::Int) where {T<:Real}
     NB = length(edges) - 1
     J = zeros(n, n)
-    @inbounds for k in 2:n
-        J[k, k - 1] = J[k - 1, k] = k / sqrt(4k^2 - 1)
+    @inbounds for k in 1:n - 1
+        J[k + 1, k] = J[k, k + 1] = k / sqrt(4k^2 - 1)
     end
-    Ev = eigen(J)
+    Ev = eigen(Symmetric(J))
     x, w = Ev.values, 2.0 * Ev.vectors[1, :].^2
     p = sortperm(x)
     x, w = x[p], w[p]
@@ -749,13 +749,14 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     coarse_bin_width = assets.coarse_bin_width
     fine_binning_Enu = assets.fine_binning_Enu
     fine_binning_Enu_c = assets.fine_binning_Enu_c
-    fine_binning_Enu_GeV = fine_binning_Enu_c ./ 1000   # convert to GeV from MeV for physics.osc.osc_prob
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
 
-    ## parameter-free flux-shape integrals M[iso, k, b] = ∫_{fine bin b} xsec(E) S_iso(E) C_k(E) dE
-    ## shared across all detectors; makes the per-call fine-grid integration a small dual-number combination
+    ## parameter-free node values of the fine-bin integrand
+    ##   Gx[iso, b, q] = w_q * xsec(E_q) * S_iso(E_q),   Cmat[k, b, q] = C_k(E_q)
+    ## P_ee(E, L_r, theta) depends on the energy, so it cannot be absorbed into a
+    ## precomputed bin integral; it is evaluated at the nodes inside neutrino_counts
     fluxb = Newtrinos.reactor_flux.flux_basis(physics.flux.cfg; datadir = physics.flux.datadir)
     iso_names = fluxb.names
     iso_weights = [fluxb.nu_per_fission[iso_names[i]] * fluxb.fractions[iso_names[i]] for i in 1:length(iso_names)]
@@ -770,8 +771,21 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
     qN = 24
     qnodes, qweights = gl_nodes_weights(fine_binning_Enu, qN)
+    # osc_prob expects energies in GeV; qnodes'[:] flattens with q fastest within
+    # each bin, so that P[(b-1)*qN + q] corresponds to node q of bin b
+    qvec = qnodes'[:] ./ 1000
 
-    M = zeros(n_iso, n_pulls, NF)
+    Gx = zeros(n_iso, NF, qN)
+    @inbounds for iso in 1:n_iso
+        S_iso = iso_shapes[iso]
+        @inbounds for b in 1:NF
+            @inbounds for q in 1:qN
+                Gx[iso, b, q] = qweights[b, q] * xsec(qnodes[b, q]) * S_iso(qnodes[b, q])
+            end
+        end
+    end
+
+    Cmat = zeros(n_pulls, NF, qN)
     @inbounds for k in 1:n_pulls
         C_k = fluxb.correction_nodes[k]
         # correction node k is a hat on [spec_edges[k], spec_edges[k+2]]
@@ -781,14 +795,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         bmin = clamp(searchsortedlast(fine_binning_Enu, lo_k), 1, NF)
         bmax = clamp(searchsortedfirst(fine_binning_Enu, hi_k) - 1, bmin, NF)
         @inbounds for b in bmin:bmax
-            for iso in 1:n_iso
-                S_iso = iso_shapes[iso]
-                s = 0.0
-                for q in 1:qN
-                    u = qnodes[b, q]
-                    s += qweights[b, q] * xsec(u) * S_iso(u) * C_k(u)
-                end
-                M[iso, k, b] = s
+            @inbounds for q in 1:qN
+                Cmat[k, b, q] = C_k(qnodes[b, q])
             end
         end
     end
@@ -860,6 +868,12 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                 eltype(params.reactor_thermal_power_scale),
                 eltype(params.lsnl_pull),
                 eltype(params.iav_offdiag_scale),
+                eltype(params.θ₁₃),
+                eltype(params.θ₁₂),
+                eltype(params.θ₂₃),
+                eltype(params.Δm²₂₁),
+                eltype(params.Δm²₃₁),
+                eltype(params.δCP),
             )
             ffs = params.fission_fractions_scale
             epf = params.energy_per_fission
@@ -872,21 +886,37 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
             wff = @. iso_weights * ffs
 
-            surv_prob = osc.osc_prob(fine_binning_Enu_c, L_km, params, anti=true)[:, :, 1, 1]
+            # P_ee(E, L_r, theta) varies across each fine bin, so the survival
+            # probability is evaluated at the Gauss-Legendre nodes and combined
+            # with the parameter-free node values
+            P = osc.osc_prob(qvec, L_km, params, anti=true)
 
-            # distance-weighted sum of all reactor spectra, from the precomputed shape table
-            # TODO: add multiplication with oscillation as function of L (per-reactor scalar factor)
+            # P-free node combination: H[b, q] = [sum_iso wff*S_iso*xsec*w_q] * [sum_k pulls*C_k]
+            H = zeros(T, NF, qN)
+            @inbounds for b in 1:NF
+                @inbounds for q in 1:qN
+                    F = zero(T)
+                    @inbounds for iso in 1:n_iso
+                        F += wff[iso] * Gx[iso, b, q]
+                    end
+                    K = zero(T)
+                    @inbounds for k in 1:n_pulls
+                        K += pulls[k] * Cmat[k, b, q]
+                    end
+                    H[b, q] = F * K
+                end
+            end
+
+            # distance-weighted sum of all reactor spectra
             spec = zeros(T, NF)
             @inbounds for r in 1:6
                 A = flux_norm * params.reactor_thermal_power_scale[r] / D * invL2[r]
                 @inbounds for b in 1:NF
                     s = zero(T)
-                    @inbounds for k in 1:n_pulls
-                        s += pulls[k] * (wff[1] * M[1, k, b] + wff[2] * M[2, k, b] + wff[3] * M[3, k, b] + wff[4] * M[4, k, b])
+                    @inbounds for q in 1:qN
+                        s += P[(b - 1) * qN + q, r, 1, 1] * H[b, q]
                     end
-                    # energy at index b is fine_binning_Enu_c[b]
-                    # get survival prob at that energy given the params and distance of the reactor r
-                    spec[b] += A * s * surv_prob[b, r]
+                    spec[b] += A * s
                 end
             end
 
