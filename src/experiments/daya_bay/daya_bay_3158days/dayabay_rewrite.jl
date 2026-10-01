@@ -628,9 +628,6 @@ function get_assets(datadir = @__DIR__)
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
         push!(observed, get_observed_counts(AD, period))
-        if c == 2
-            break
-        end
     end
     
     observed = vcat(observed...)
@@ -957,9 +954,6 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         end
 
         neutrino_models[p_AD] = neutrino_counts
-        if idx == 2
-            break
-        end
     
     end
 
@@ -967,9 +961,6 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            if c == 2
-                break
-            end
         end
         expected = vcat(output...)
         distprod(Poisson.(expected))
@@ -1024,9 +1015,6 @@ end
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             end
-            if c == 2
-                break
-            end
 
         end
     
@@ -1059,9 +1047,7 @@ end
 
 
             save("EH_$(c).png", f)
-            if c == 2 
-                break
-            end
+
         end
     end
 end
