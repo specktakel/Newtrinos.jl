@@ -13,7 +13,7 @@ import YAML
 using DelimitedFiles
 using ..Newtrinos
 
-export ReactorFluxConfig, DayaBayFlux
+export ReactorFluxConfig, DayaBayFlux, flux_basis
 
 
 const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
@@ -95,7 +95,6 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
     fission_fractions_scale_R5 = collect([Float64(fraction_scale[name][1]) for name in names])
     fission_fractions_scale_R6 = collect([Float64(fraction_scale[name][1]) for name in names])
     spectrum_pulls = ones(19)
-
 
     params = (;
         energy_per_fission,
@@ -279,7 +278,7 @@ function extract_reactor_spectra(datadir = datadir)
     neq_U235 = Float64[]
 
     foreach(x-> (push!(neq_Pu239, x[2]), push!(E_neq, x[1])), file["Pu239"][1:end])
-    foreach(x-> push!(neq_Pu241, x[2]), file["Pu239"][1:end])
+    foreach(x-> push!(neq_Pu241, x[2]), file["Pu241"][1:end])
     foreach(x-> push!(neq_U235, x[2]), file["U235"][1:end])
     close(file)
 
@@ -324,8 +323,17 @@ end
 
 
 
-function get_flux(cfg::DayaBayFlux; datadir = datadir)
+"""
+    build_flux_components(cfg::DayaBayFlux; datadir = datadir)
 
+Build the parameter-free building blocks of the Daya Bay reactor flux model:
+isotope spectrum shapes, flux-shape correction node functions, and constants.
+Shared by [`get_flux`] and [`flux_basis`].
+"""
+function build_flux_components(cfg::DayaBayFlux; datadir = datadir)
+    
+    # fixed ordering of isotopes
+    names = (:U235, :U238, :Pu239, :Pu241)
     # get fission fractions for fixed weighting
     fractions = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_fission_fractions.yaml"))["parameters"]["fission_fractions"]
 
@@ -346,32 +354,9 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
     f_235_interp = Interpolator(E, fluxes.U235)
     U_235(E) = isnan(f_235_interp(E)) ? 0.0 : f_235_interp(E)
 
-    E_neq = fluxes.E_neq
-
-    neq_U235 = linear_interpolation(E_neq, fluxes.neq_U235, extrapolation_bc=0.0)
-    neq_Pu239 = linear_interpolation(E_neq, fluxes.neq_Pu239, extrapolation_bc=0.0)
-    neq_Pu241 = linear_interpolation(E_neq, fluxes.neq_Pu241, extrapolation_bc=0.0)
-    neq_U238(E) = 0.
-
-    neq_funcs = [neq_U235, neq_U238, neq_Pu239, neq_Pu241]
-
-    
-    names = (:U235, :U238, :Pu239, :Pu241)
-    neq_rel_corr = NamedTuple{names}(neq_funcs)
-    
-    E_snf = fluxes.E_snf
-    snf_R1 = linear_interpolation(E_snf, fluxes.R1_snf, extrapolation_bc=0.)
-    snf_R2 = linear_interpolation(E_snf, fluxes.R2_snf, extrapolation_bc=0.)
-    snf_R3 = linear_interpolation(E_snf, fluxes.R3_snf, extrapolation_bc=0.)
-    snf_R4 = linear_interpolation(E_snf, fluxes.R4_snf, extrapolation_bc=0.)
-    snf_R5 = linear_interpolation(E_snf, fluxes.R5_snf, extrapolation_bc=0.)
-    snf_R6 = linear_interpolation(E_snf, fluxes.R6_snf, extrapolation_bc=0.)
-
-    snf_fluxes = [snf_R1, snf_R2, snf_R3, snf_R4, snf_R5, snf_R6]
-    
     funcs = [U_235, U_238, Pu_239, Pu_241]
-    fluxes = NamedTuple{names}(funcs)
-    
+    isotope_shapes = NamedTuple{names}(funcs)
+
     # get nominal thermal power
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_thermal_power_nominal.yaml"))
     nominal_thermal_power = file["parameters"]["nominal_thermal_power"]   # GW
@@ -382,6 +367,27 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
 
     nu_per_fission = NamedTuple((Symbol(key), value) for (key, value) in nu_per_f)
 
+    #snf correction
+    E_snf = fluxes.E_snf
+    snf_R1 = linear_interpolation(E_snf, fluxes.R1_snf, extrapolation_bc=0.)
+    snf_R2 = linear_interpolation(E_snf, fluxes.R2_snf, extrapolation_bc=0.)
+    snf_R3 = linear_interpolation(E_snf, fluxes.R3_snf, extrapolation_bc=0.)
+    snf_R4 = linear_interpolation(E_snf, fluxes.R4_snf, extrapolation_bc=0.)
+    snf_R5 = linear_interpolation(E_snf, fluxes.R5_snf, extrapolation_bc=0.)
+    snf_R6 = linear_interpolation(E_snf, fluxes.R6_snf, extrapolation_bc=0.)
+
+    snf_rel_corr = [snf_R1, snf_R2, snf_R3, snf_R4, snf_R5, snf_R6]
+
+    # neq correction
+    E_neq = fluxes.E_neq
+
+    neq_U235 = linear_interpolation(E_neq, fluxes.neq_U235, extrapolation_bc=0.0)
+    neq_Pu239 = linear_interpolation(E_neq, fluxes.neq_Pu239, extrapolation_bc=0.0)
+    neq_Pu241 = linear_interpolation(E_neq, fluxes.neq_Pu241, extrapolation_bc=0.0)
+    neq_U238(E) = 0.
+
+    neq_funcs = [neq_U235, neq_U238, neq_Pu239, neq_Pu241]
+    neq_rel_corr = NamedTuple{names}(neq_funcs)
 
     elementary_charge = 1.602176634e-19
 
@@ -394,7 +400,6 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
     width = diff(spec_edges)
     push!(spec_edges, spec_edges[end] + width[end])
     insert!(spec_edges, 1, spec_edges[1] - width[1])
-    E = collect(LinRange(1, 12, 1000))
 
     nodes = Diagonal(ones(length(spec_edges)))
     node_itp = []
@@ -441,36 +446,77 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
         end
     end
 
-    function correction(E, pulls)
-        return sum([pull * itp.(E) for (pull, itp) in zip(pulls, node_itp)])
-    end
+    (;
+        names,
+        fractions,
+        nu_per_fission,
+        isotope_shapes,
+        correction_nodes = node_itp,
+        snf_rel_corr,
+        neq_rel_corr,
+        spec_edges,
+        flux_const = GJ_to_MeV * nominal_thermal_power,
+    )
+end
+
+
+"""
+    flux_basis(cfg::ReactorFluxConfig; datadir = datadir)
+
+Parameter-free building blocks of the Daya Bay reactor flux model, for
+precomputing energy-shape integrals of a cross-section weighted flux.
+
+With `c_i = nu_per_fission[iso] * fractions[iso] * fission_fractions_scale_i(θ)`
+and `p_k = spectrum_pulls_k(θ)`, the cross-section weighted flux factorizes as
+
+    xsec(E) * flux(E, θ) = A(θ) * Σ_{i,k} c_i p_k * xsec(E) * S_iso(E) * C_k(E)
+
+with `A(θ) = flux_const * thermal_power_scale_r / Σ_i ffs_i * epf_i`, so the
+integral over any fixed energy bin `b` equals
+`A(θ) * Σ_k p_k * Σ_i c_i * M[i, k, b]` with the parameter-free table
+`M[i, k, b] = ∫_b xsec(E) * S_iso(E) * C_k(E) dE`.
+
+Fields:
+- `names` — isotope names, matching the order of `fission_fractions_scale` / `energy_per_fission`
+- `fractions`, `nu_per_fission` — fixed nominal fission fractions / antineutrinos per fission
+- `isotope_shapes` — parameter-free isotope spectrum functions `S_iso(E)` (zero outside the data range)
+- `correction_nodes` — vector of `K` correction node (hat/plateau) functions `C_k(E)`
+- `spec_edges` — node grid of the correction functions
+- `flux_const` — `GJ_to_MeV * nominal_thermal_power`
+"""
+function flux_basis(cfg::ReactorFluxConfig; datadir = datadir)
+    build_flux_components(cfg.flux_model; datadir = datadir)
+end
+
+
+function get_flux(cfg::DayaBayFlux; datadir = datadir)
+    c = build_flux_components(cfg; datadir)
+    names = c.names
 
     # use default params for the snf contribution
     default_params = get_params(cfg, datadir=datadir)
     # get fissions per second for all reactors at nominal values
-    fissions_per_second_nom = GJ_to_MeV *  nominal_thermal_power / sum([fractions[iso] * default_params.energy_per_fission[i] for (i, iso) in enumerate(names)])
+    fissions_per_second_nom = c.flux_const / sum([c.fractions[iso] * default_params.energy_per_fission[i] for (i, iso) in enumerate(names)])
 
-    function snf_flux(E, snf_scale, reac_idx)
-        snf_scale * fissions_per_second_nom * sum([fractions[iso] * nu_per_fission[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]) .* snf_fluxes[reac_idx].(E)
+    function correction(E, pulls)
+        return sum([pull * itp.(E) for (pull, itp) in zip(pulls, c.correction_nodes)])
     end
 
-    function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, neq_scale, snf_scale, pulls, reac_idx)
-        nom_prefac = GJ_to_MeV * thermal_power_scale * nominal_thermal_power
+    function snf_flux(E, snf_scale, reac_idx)
+        snf_scale * fissions_per_second_nom * sum([c.fractions[iso] * c.nu_per_fission[iso] * c.isotope_shapes[iso].(E) for (i, iso) in enumerate(names)]) .* c.snf_rel_corr[reac_idx].(E)
+    end
 
-        # have nominal flux
-        # neq: relative correction to nominal flux, i.e.
-        # flux_neq(E, iso, reactor) = (1 + neq_rel(E, iso) * neq_scale(reactor)) * flux_nominal(E, iso, reactor), with neq_scale a free parameter and neq_rel
-        # spent nuclear fluel (snf), relative correction to nominal flux, NB: applied to equilibrium/nominal flux
-        # flux_snf(E, iso, reactor) = 
-        corr = correction(E, pulls)
-        flux = nom_prefac * sum([
-            (1 .+ neq_scale[i] .* neq_rel_corr[iso].(E)) .* nu_per_fission[iso] .* fission_fractions_scale[i] .* fractions[iso] .* fluxes[iso].(E) for (i, iso) in enumerate(names)]
+    # c.flux_const = GJ_to_MeV * nominal_thermal_power
+    function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls, neq_scale, snf_scale, reac_idx)
+
+
+        flux = c.flux_const * thermal_power_scale * sum([
+            (1.0 .+ neq_scale[i] .* c.neq_rel_corr[iso].(E)) .*
+            c.nu_per_fission[iso] .* fission_fractions_scale[i] .* c.fractions[iso] .* c.isotope_shapes[iso].(E) for (i, iso) in enumerate(names)]
             ) / sum(
-                [fission_fractions_scale[i] * energy_per_fission[i] for (i, iso) in enumerate(names)]
+                [fission_fractions_scale[i]  * energy_per_fission[i] for (i, iso) in enumerate(names)]
             )
-        snf = snf_flux(E, snf_scale, reac_idx)
-
-        return @. (flux + snf) * corr
+        return (flux .+ snf_flux(E, snf_scale, reac_idx)) .* correction(E, pulls)
     end
 
     reactor_flux
