@@ -75,7 +75,17 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_nonequilibrium_correction.yaml"))
     mu = file["parameters"]["nonequilibrium_scale"][1]
 
-    neq_scale = ones(4) .* mu
+    neq_scale_R1 = ones(4) .* mu
+    neq_scale_R2 = ones(4) .* mu
+    neq_scale_R3 = ones(4) .* mu
+    neq_scale_R4 = ones(4) .* mu
+    neq_scale_R5 = ones(4) .* mu
+    neq_scale_R6 = ones(4) .* mu
+
+    file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_snf.yaml"))
+    mu = file["parameters"]["snf_scale"][1]
+
+    snf_scale = ones(6) .* mu
 
     names = data["correlations"]["fission_fractions_scale"]["names"]
     fission_fractions_scale_R1 = collect([Float64(fraction_scale[name][1]) for name in names])
@@ -90,7 +100,13 @@ function get_params(flux::DayaBayFlux; datadir = datadir)
     params = (;
         energy_per_fission,
         reactor_thermal_power_scale,
-        neq_scale,
+        neq_scale_R1,
+        neq_scale_R2,
+        neq_scale_R3,
+        neq_scale_R4,
+        neq_scale_R5,
+        neq_scale_R6,
+        snf_scale,
         fission_fractions_scale_R1,
         fission_fractions_scale_R2,
         fission_fractions_scale_R3,
@@ -163,18 +179,60 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
     mu = file["parameters"]["nonequilibrium_scale"][1]
     sigma = file["parameters"]["nonequilibrium_scale"][2] * 0.01  # percent
 
-    neq_scale = [
+    neq_scale_R1 = [
+        Distributions.Normal(mu, sigma),
+        1.,   # fixed for U238, second entry in our fixed order of isotopes
+        Distributions.Normal(mu, sigma),
+        Distributions.Normal(mu, sigma),
+    ]
+    neq_scale_R2 = [
+        Distributions.Normal(mu, sigma),
+        1.,   # fixed for U238, second entry in our fixed order of isotopes
+        Distributions.Normal(mu, sigma),
+        Distributions.Normal(mu, sigma),
+    ]
+    neq_scale_R3 = [
+        Distributions.Normal(mu, sigma),
+        1.,   # fixed for U238, second entry in our fixed order of isotopes
+        Distributions.Normal(mu, sigma),
+        Distributions.Normal(mu, sigma),
+    ]
+    neq_scale_R4 = [
+        Distributions.Normal(mu, sigma),
+        1.,   # fixed for U238, second entry in our fixed order of isotopes
+        Distributions.Normal(mu, sigma),
+        Distributions.Normal(mu, sigma),
+    ]
+    neq_scale_R5 = [
+        Distributions.Normal(mu, sigma),
+        1.,   # fixed for U238, second entry in our fixed order of isotopes
+        Distributions.Normal(mu, sigma),
+        Distributions.Normal(mu, sigma),
+    ]
+    neq_scale_R6 = [
         Distributions.Normal(mu, sigma),
         1.,   # fixed for U238, second entry in our fixed order of isotopes
         Distributions.Normal(mu, sigma),
         Distributions.Normal(mu, sigma),
     ]
 
+    # snf correction
+    file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_snf.yaml"))
+    mu = file["parameters"]["snf_scale"][1]
+    sigma = file["parameters"]["snf_scale"][2] * 0.01   # percent
+    snf_scale = Distributions.MvNormal(ones(6) .* mu, Diagonal(ones(6) .* sigma.^2))
+
 
     priors = (;
         energy_per_fission,
         reactor_thermal_power_scale,
-        neq_scale,
+        neq_scale_R1,
+        neq_scale_R2,
+        neq_scale_R3,
+        neq_scale_R4,
+        neq_scale_R5,
+        neq_scale_R6,
+        snf_scale,
         fission_fractions_scale_R1,
         fission_fractions_scale_R2,
         fission_fractions_scale_R3,
@@ -406,7 +464,7 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
         # flux_snf(E, iso, reactor) = 
         corr = correction(E, pulls)
         flux = nom_prefac * sum([
-            (1 .+ neq_scale .* neq_rel_corr[iso].(E)) .* nu_per_fission[iso] .* fission_fractions_scale[i] .* fractions[iso] .* fluxes[iso].(E) for (i, iso) in enumerate(names)]
+            (1 .+ neq_scale[i] .* neq_rel_corr[iso].(E)) .* nu_per_fission[iso] .* fission_fractions_scale[i] .* fractions[iso] .* fluxes[iso].(E) for (i, iso) in enumerate(names)]
             ) / sum(
                 [fission_fractions_scale[i] * energy_per_fission[i] for (i, iso) in enumerate(names)]
             )

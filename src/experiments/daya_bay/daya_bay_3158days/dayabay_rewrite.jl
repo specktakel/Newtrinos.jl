@@ -711,7 +711,25 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     reactor_flux = physics.flux.flux
     xsec_config = physics.xsec
     xsec = xsec_config.xsec
-    xsec_weighted_spectrum(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls) = xsec.(E) .* reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, spec_pulls)
+    xsec_weighted_spectrum(
+        E,
+        thermal_power_scale,
+        energy_per_fission,
+        fission_fractions_scale,
+        neq_scale,
+        snf_scale,
+        spec_pulls,
+        reactor_idx,
+    ) = xsec.(E) .* reactor_flux(
+        E,
+        thermal_power_scale,
+        energy_per_fission,
+        fission_fractions_scale,
+        neq_scale,
+        snf_scale,
+        spec_pulls,
+        reactor_idx,
+    )
     n_protons = get_proton_number(datadir)
     
     
@@ -751,6 +769,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         accidentals = bg_dict["accidentals"]
         
         ffs_symbols = [Symbol("fission_fractions_scale_R$(i)") for i=1:6]
+        neq_symbols = [Symbol("neq_scale_R$(i)") for i=1:6]
 
         amc = bg_dict["amc"]
         lihe = bg_dict["lithium_helium"]
@@ -787,7 +806,16 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             integrated_spectrum = zeros(T, length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
             for i in 1:6   # loop over reactors
                 # TODO: add multiplication with oscillation as function of L
-                integrand(u, p) = xsec_weighted_spectrum(u, params.reactor_thermal_power_scale[i], params.energy_per_fission, params[ffs_symbols[i]], params.spectrum_pulls)
+                integrand(u, p) = xsec_weighted_spectrum(
+                    u,
+                    params.reactor_thermal_power_scale[i],
+                    params.energy_per_fission,
+                    params[ffs_symbols[i]],
+                    params[neq_symbols[i]],
+                    params.snf_scale[i],
+                    params.spectrum_pulls,
+                    i
+                    )
                 integrated_spectrum_per_reactor = T[]
                 for (l, h) in zip(fine_binning_Enu[1:end-1], fine_binning_Enu[2:end]) 
                     domain = (l, h)
