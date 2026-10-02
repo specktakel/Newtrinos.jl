@@ -390,28 +390,29 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
     # use default params for the snf contribution
     default_params = get_params(cfg, datadir=datadir)
     # get fissions per second for all reactors at nominal values
-    fissions_per_second_nom = GJ_to_MeV *  nominal_thermal_power * sum([fractions[iso] * default_params.energy_per_fission[i] for (i, iso) in enumerate(names)])
+    fissions_per_second_nom = GJ_to_MeV *  nominal_thermal_power / sum([fractions[iso] * default_params.energy_per_fission[i] for (i, iso) in enumerate(names)])
 
     function snf_flux(E, snf_scale, reac_idx)
-        snf_scale * fissions_per_second_nom * sum([fractions[iso] * nu_per_fission[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]) * snf_fluxes[reac_idx].(E)
+        snf_scale * fissions_per_second_nom * sum([fractions[iso] * nu_per_fission[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]) .* snf_fluxes[reac_idx].(E)
     end
 
     function reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, neq_scale, snf_scale, pulls, reac_idx)
         nom_prefac = GJ_to_MeV * thermal_power_scale * nominal_thermal_power
-    
+
         # have nominal flux
         # neq: relative correction to nominal flux, i.e.
         # flux_neq(E, iso, reactor) = (1 + neq_rel(E, iso) * neq_scale(reactor)) * flux_nominal(E, iso, reactor), with neq_scale a free parameter and neq_rel
         # spent nuclear fluel (snf), relative correction to nominal flux, NB: applied to equilibrium/nominal flux
         # flux_snf(E, iso, reactor) = 
+        corr = correction(E, pulls)
         flux = nom_prefac * sum([
-            (1 + neq_scale * neq_rel_corr[iso].(E)) * nu_per_fission[iso] * fission_fractions_scale[i] * fractions[iso] * fluxes[iso].(E) for (i, iso) in enumerate(names)]
+            (1 .+ neq_scale .* neq_rel_corr[iso].(E)) .* nu_per_fission[iso] .* fission_fractions_scale[i] .* fractions[iso] .* fluxes[iso].(E) for (i, iso) in enumerate(names)]
             ) / sum(
                 [fission_fractions_scale[i] * energy_per_fission[i] for (i, iso) in enumerate(names)]
-            ) .* correction(E, pulls)
+            )
         snf = snf_flux(E, snf_scale, reac_idx)
 
-        return  flux .+ snf
+        return @. (flux + snf) * corr
     end
 
     reactor_flux
