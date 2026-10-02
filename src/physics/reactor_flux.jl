@@ -213,7 +213,7 @@ function extract_reactor_spectra(datadir = datadir)
     uncorr_U235 = Float64[]
 
     #neq correction
-    file = h5open("dayabay_data/nonequilibrium_correction.hdf5")
+    file = h5open(joinpath(datadir, "dayabay_data/nonequilibrium_correction.hdf5"))
 
     E_neq = Float64[]
     neq_Pu239 = Float64[]
