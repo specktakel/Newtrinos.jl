@@ -228,8 +228,10 @@ function get_iav_matrix(datadir = @__DIR__)
 
     diag_iav = Diagonal(iav)
 
+    offdiag = iav .- diag_iav
+
     function off_diag_scaled_iav(offdiag_scale)
-        offdiag_scale .* iav .- (offdiag_scale - 1) .* diag_iav
+        @. offdiag_scale * offdiag + diag_iav
     end
 
     off_diag_scaled_iav
@@ -736,6 +738,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     iav_func = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
+    osc = physics.osc
+
 
     coarse_binning = assets.coarse_binning
     coarse_binning_c = assets.coarse_binning_c
@@ -762,6 +766,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
 
         ad_idx = findfirst(df_exp[!, "AD"] .== "AD$(AD)")
         L = collect(df_exp[ad_idx, [:R1, :R2, :R3, :R4, :R5, :R6]])
+        L_km = L / 1e3
         L2 = 4 * pi .* L.^2;
         n_p = n_protons["AD$(AD)"]
 
@@ -782,7 +787,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         amc_base = lt * amc.rate .* amc.shape
         lihe_base = lt * lihe.rate .* lihe.shape
         fast_n_base = lt * fast_n.rate .* fast_n.shape
-        alpha_n_base = lt * alpha_n.rate .* alpha_n.shape
+        alpha_n_base = lt .* alpha_n.shape
 
         function background_counts(params)
 
@@ -795,6 +800,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             _alpha_n = params.alpha_n_rate[idx]
 
             return @. acc_base * _acc + amc_base * _amc + lihe_base * _lihe + fast_n_base * _fast_n + alpha_n_base * _alpha_n
+            #return @. alpha_n_base * _alpha_n
         end
         background_models[p_AD] = background_counts
   
@@ -806,7 +812,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             integrated_spectrum = zeros(T, length(fine_binning_Enu) - 1)   # distance-weighted sum of all reactor spectra
             for i in 1:6   # loop over reactors
                 # TODO: add multiplication with oscillation as function of L
-                integrand(u, p) = xsec_weighted_spectrum(
+                integrand(u, p) = osc.osc_prob([u/1e3], [L_km[i]], params, anti=true)[:, :, 1, 1][1] * xsec_weighted_spectrum(
                     u,
                     params.reactor_thermal_power_scale[i],
                     params.energy_per_fission,
@@ -927,21 +933,20 @@ end
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             end
-            break
 
         end
     
         for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
-            ax = Axis(f[1, 1])
-            plot!(ax, assets.coarse_binning_c, o ./ assets.coarse_bin_width, label="Observed", color=:black)
+            ax = Axis(f[1, 1], yscale=log10, xticks=collect(0.5:0.5:12))
+            #plot!(ax, assets.coarse_binning_c, o ./ assets.coarse_bin_width, label="Observed", color=:black)
             stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
-            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)) ./ assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
+            #barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)) ./ assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
 
-            ax.xticksvisible = false
-            ax.xticklabelsvisible = false
-
+            #ax.xticksvisible = false
+            #ax.xticklabelsvisible = false
+            """
             ax2 = Axis(f[2, 1])
 
             plot!(ax2, assets.coarse_binning_c, o ./ m, color=:black, label="Observed")
@@ -955,12 +960,14 @@ end
             ax2.xlabel="Eₚ (MeV)"
             ax2.ylabel="Counts/Expected"
 
-            xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
-
+            """
+            xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
+            ylims!(ax, 1e1, 1e5)
+            
 
             save("EH_$(c).png", f)
-            break
+            
         end
     end
 end

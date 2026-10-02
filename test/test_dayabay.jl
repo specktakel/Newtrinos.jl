@@ -4,6 +4,13 @@ using Test
 using Newtrinos
 
 @testset "DayaBay" begin
+    @testset "Meta" begin
+        p_AD = "6ADAD11"
+        @test 11 == Newtrinos.dayabay_rewrite.retrieve_AD(p_AD)
+        @test 6 == Newtrinos.dayabay_rewrite.retrieve_period(p_AD)
+        @test 1 == Newtrinos.dayabay_rewrite.retrieve_EH(p_AD)
+    end
+
     db = Newtrinos.dayabay_rewrite.configure()
     @testset "IAV" begin
         iav_func = Newtrinos.dayabay_rewrite.get_iav_matrix()
@@ -66,4 +73,5 @@ using Newtrinos
         @test length(params.iav_offdiag_scale) == length(assets.df_exp[!, "AD"])
         @test length(params.lsnl_pull) == 4
     end
+
 end
