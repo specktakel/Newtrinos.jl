@@ -718,18 +718,18 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
         thermal_power_scale,
         energy_per_fission,
         fission_fractions_scale,
+        spec_pulls,
         neq_scale,
         snf_scale,
-        spec_pulls,
         reactor_idx,
     ) = xsec.(E) .* reactor_flux(
         E,
         thermal_power_scale,
         energy_per_fission,
         fission_fractions_scale,
+        spec_pulls,
         neq_scale,
         snf_scale,
-        spec_pulls,
         reactor_idx,
     )
     n_protons = get_proton_number(datadir)
@@ -817,9 +817,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                     params.reactor_thermal_power_scale[i],
                     params.energy_per_fission,
                     params[ffs_symbols[i]],
+                    params.spectrum_pulls,
                     params[neq_symbols[i]],
                     params.snf_scale[i],
-                    params.spectrum_pulls,
                     i
                     )
                 integrated_spectrum_per_reactor = T[]
@@ -914,7 +914,7 @@ end
         EH3_var = zeros(n_ana_binning)
 
         _mean = [EH1_mean, EH2_mean, EH3_mean]
-        _var = [EH1_mean, EH2_mean, EH3_mean]
+        _var = [EH1_var, EH2_var, EH3_var]
         obs = [EH1_obs, EH2_obs, EH3_obs]
 
 
