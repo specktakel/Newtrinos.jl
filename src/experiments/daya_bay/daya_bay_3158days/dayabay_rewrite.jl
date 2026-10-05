@@ -755,6 +755,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     reactor_flux = physics.flux.flux
 
     osc = physics.osc
+    """
     xsec_weighted_spectrum(
             E,
             thermal_power_scale,
@@ -774,7 +775,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             snf_scale,
             reactor_idx,
         )
-
+    """
+    xsec = physics.xsec.xsec
+    
     coarse_binning = assets.coarse_binning
     coarse_binning_c = assets.coarse_binning_c
     coarse_bin_width = assets.coarse_bin_width
@@ -784,7 +787,8 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
-
+    
+    xsec_eval = xsec.(fine_binning_Enu_c)
     ## parameter-free fine-bin node values of the xsec-weighted flux shape (M-table)
     ## the flux factorizes as
     ##   xsec(E)*flux_r(E, theta) = corr(E, pulls) *
@@ -1022,10 +1026,10 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             @inbounds for r in 1:6
                 fission_fractions = params[ffs_symbols[r]]
                 neq_scale = params[neq_symbols[r]]
-                spec .+= P[:, r] .* xsec_weighted_spectrum(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
+                spec .+= P[:, r] .* reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
             end
 
-            spec .*= flux_norm .* fine_bin_Enu_width
+            spec .*= flux_norm .* fine_bin_Enu_width .* xsec_eval
 
             smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx], spec)
 
