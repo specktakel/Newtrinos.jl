@@ -752,14 +752,35 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     iav_func = get_iav_matrix(datadir)
     lsnl = get_lsnl_correction(datadir)
 
-    osc = physics.osc
+    reactor_flux = physics.flux.flux
 
+    osc = physics.osc
+    xsec_weighted_spectrum(
+            E,
+            thermal_power_scale,
+            energy_per_fission,
+            fission_fractions_scale,
+            spec_pulls,
+            neq_scale,
+            snf_scale,
+            reactor_idx,
+        ) = xsec.(E) .* reactor_flux(
+            E,
+            thermal_power_scale,
+            energy_per_fission,
+            fission_fractions_scale,
+            spec_pulls,
+            neq_scale,
+            snf_scale,
+            reactor_idx,
+        )
 
     coarse_binning = assets.coarse_binning
     coarse_binning_c = assets.coarse_binning_c
     coarse_bin_width = assets.coarse_bin_width
     fine_binning_Enu = assets.fine_binning_Enu
     fine_binning_Enu_c = assets.fine_binning_Enu_c
+    fine_bin_Enu_width = diff(fine_binning_Enu)
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
@@ -787,10 +808,13 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
     epf_nom = physics.flux.params.energy_per_fission
     fissions_nom = flux_const / sum([fluxb.fractions[iso_names[i]] * epf_nom[i] for i in 1:n_iso])
 
+    E_nu_GeV = fine_binning_Enu_c ./ 1e3
+
     NF = length(fine_binning_Enu) - 1
     NFc = length(fine_binning_Edep_c)
 
-    qN = 24
+    """
+    qN = 4
     qnodes, qweights = gl_nodes_weights(fine_binning_Enu, qN)
     # osc_prob expects energies in GeV; qnodes'[:] flattens with q fastest within
     # each bin, so that P[(b-1)*qN + q] corresponds to node q of bin b
@@ -855,7 +879,7 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             end
         end
     end
-
+    """
 
     ## create background model functions, taking parameter NamedTuple as arg
     background_models = OrderedDict()
@@ -951,11 +975,9 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
             epf = params.energy_per_fission
             pulls = params.spectrum_pulls
 
-            # P_ee(E, L_r, theta) varies across each fine bin, so the survival
-            # probability is evaluated at the Gauss-Legendre nodes and combined
-            # with the parameter-free node values
-            P = osc.osc_prob(qvec, L_km, params, anti=true)
+            P = osc.osc_prob(E_nu_GeV, L_km, params, anti=true)[:, :, 1, 1]
 
+            """
             # correction-node combination, reactor independent
             K = zeros(T, NF, qN)
             @inbounds for b in 1:NF
@@ -994,6 +1016,16 @@ function get_forward_model(physics, assets, datadir = @__DIR__)
                     spec[b] += s * flux_norm * invL2[r]
                 end
             end
+            """
+
+            spec = zeros(T, NF)
+            @inbounds for r in 1:6
+                fission_fractions = params[ffs_symbols[r]]
+                neq_scale = params[neq_symbols[r]]
+                spec .+= P[:, r] .* xsec_weighted_spectrum(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
+            end
+
+            spec .*= flux_norm .* fine_bin_Enu_width
 
             smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx], spec)
 
