@@ -175,45 +175,16 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
 
     ## non-equilibrium correction
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_nonequilibrium_correction.yaml"))
-    mu = file["parameters"]["nonequilibrium_scale"][1]
-    sigma = file["parameters"]["nonequilibrium_scale"][2] * 0.01  # percent
+    mu = file["parameters"]["nonequilibrium_scale"][1] .* ones(4)
+    sigma = mu .* file["parameters"]["nonequilibrium_scale"][2] .* 0.01 # percent
 
-    neq_scale_R1 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
-    neq_scale_R2 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
-    neq_scale_R3 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
-    neq_scale_R4 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
-    neq_scale_R5 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
-    neq_scale_R6 = [
-        Distributions.Normal(mu, sigma),
-        1.,   # fixed for U238, second entry in our fixed order of isotopes
-        Distributions.Normal(mu, sigma),
-        Distributions.Normal(mu, sigma),
-    ]
+
+    neq_scale_R1 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
+    neq_scale_R2 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
+    neq_scale_R3 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
+    neq_scale_R4 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
+    neq_scale_R5 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
+    neq_scale_R6 = Distributions.MvNormal(mu, Diagonal(sigma.^2))
 
     # snf correction
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_snf.yaml"))

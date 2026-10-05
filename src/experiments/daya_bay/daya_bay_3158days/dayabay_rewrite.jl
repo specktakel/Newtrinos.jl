@@ -1135,9 +1135,9 @@ end
         for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
             ax = Axis(f[1, 1])
-            plot!(ax, assets.coarse_binning_c, o ./ assets.coarse_bin_width, label="Observed", color=:black)
-            stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
-            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)) ./ assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
+            plot!(ax, assets.coarse_binning_c, o, label="Observed", color=:black)
+            stephist!(ax, assets.coarse_binning_c, weights=m, bins=assets.coarse_binning, label="Expected")
+            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v)), width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)), alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
 
             ax.xticksvisible = false
