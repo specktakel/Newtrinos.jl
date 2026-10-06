@@ -462,10 +462,10 @@ function get_priors(datadir = @__DIR__)
     dict = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/background_rate_scale_accidentals.yaml"))
     # multiply for all ADs
     acc_scale_nom = dict["parameters"]["accidentals"][1]  # blow up to vector over all ADs
-    acc_scale_unc = acc_scale_nom * 0.01   # percent error  # blow up to diagonal matrix
+    acc_scale_unc = dict["parameters"]["accidentals"][2] * acc_scale_nom * 0.01   # percent error
 
     len = length(detectors_6AD) + length(detectors_8AD) + length(detectors_7AD)
-    acc_scale = Distributions.MvNormal(acc_scale_nom .*ones(len), Diagonal(acc_scale_unc^2 .* ones(len)))
+    acc_scale = Distributions.MvNormal(acc_scale_nom .* ones(len), Diagonal(acc_scale_unc^2 .* ones(len)))
 
 
     ## amc
@@ -487,7 +487,7 @@ function get_priors(datadir = @__DIR__)
 
     len = length(period_list) * length(EH_list)
     fast_n_unc_scale = Distributions.MvNormal(fast_n_nom .* ones(len), Diagonal(fast_n_unc^2 .* ones(len)))
-    lihe_unc_scale = Distributions.MvNormal(lihe_nom .* ones(len), Diagonal(lihe_unc .*ones(len)))
+    lihe_unc_scale = Distributions.MvNormal(lihe_nom .* ones(len), Diagonal(lihe_unc^2 .* ones(len)))
 
 
     ## uncorrelated
@@ -512,13 +512,13 @@ function get_priors(datadir = @__DIR__)
     # is correlated within AD
     dict = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/detector_relative.yaml"))
 
-    eff_nom = Float64(dict["parameters"]["detector_relative"]["energy_scale_factor"][1])
-    eff_unc = eff_nom * Float64(dict["parameters"]["detector_relative"]["energy_scale_factor"][2] * 0.01)  # percent
-    e_scale_nom =  dict["parameters"]["detector_relative"]["energy_scale_factor"][1]
-    e_scale_unc = e_scale_nom * dict["parameters"]["detector_relative"]["energy_scale_factor"][2] * 0.01  # percent
+    eff_nom = Float64(dict["parameters"]["detector_relative"]["efficiency_factor"][1])
+    eff_unc = eff_nom * Float64(dict["parameters"]["detector_relative"]["efficiency_factor"][2] * 0.01)  # percent
+    e_scale_nom =  Float64(dict["parameters"]["detector_relative"]["energy_scale_factor"][1])
+    e_scale_unc = e_scale_nom * Float64(dict["parameters"]["detector_relative"]["energy_scale_factor"][2] * 0.01)  # percent
 
     scale = hcat([[eff_unc^2, eff_unc * e_scale_unc], [eff_unc * e_scale_unc, e_scale_unc^2]]...)
-
+    println(scale)
     corr_mat = hcat(dict["correlations"]["detector_relative"]["matrix"]...)
     # correlation(i, j) = covariance(i, j) / sqrt(var_i * var_j)) -> invert to get covariance matrix for MvNormal
     cov_mat = corr_mat .* scale
