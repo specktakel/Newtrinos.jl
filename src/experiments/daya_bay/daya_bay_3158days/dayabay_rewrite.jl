@@ -42,7 +42,7 @@ function configure(physics=default_physics(), datadir = @__DIR__)
         params = get_params(datadir),
         priors = get_priors(datadir),
         assets = assets,
-        forward_model = get_forward_model(physics, assets, datadir),
+        forward_model = get_forward_model(physics, assets, datadir=datadir),
         plot = get_plot(physics, assets)
     )
 end
@@ -199,7 +199,7 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
 
     close(data)
 
-    eff_livetime_seconds = sum(livetime)
+    eff_livetime_seconds = sum(eff_livetime)
     eff_livetime = eff_livetime_seconds / 60 / 60 / 24   # convert from seconds to days
 
     lihe = (rate=rate_lithium_helium, shape=shape_lithium_helium, uncertainty=uncertainty_lithium_helium)
