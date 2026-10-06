@@ -518,7 +518,6 @@ function get_priors(datadir = @__DIR__)
     e_scale_unc = e_scale_nom * Float64(dict["parameters"]["detector_relative"]["energy_scale_factor"][2] * 0.01)  # percent
 
     scale = hcat([[eff_unc^2, eff_unc * e_scale_unc], [eff_unc * e_scale_unc, e_scale_unc^2]]...)
-    println(scale)
     corr_mat = hcat(dict["correlations"]["detector_relative"]["matrix"]...)
     # correlation(i, j) = covariance(i, j) / sqrt(var_i * var_j)) -> invert to get covariance matrix for MvNormal
     cov_mat = corr_mat .* scale
@@ -800,6 +799,10 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
             _alpha_n = params.alpha_n_rate[idx]
 
             return @. acc_base * _acc + amc_base * _amc + lihe_base * _lihe + fast_n_base * _fast_n + alpha_n_base * _alpha_n
+            #return @. alpha_n_base * _alpha_n
+
+            #@return (acc = _acc .* acc_base, amc = _amc .* amc_base, lihe = _lihe .* lihe_base, fast_n = _fast_n .* fast_n_base, alpha_n = _alpha_n .* alpha_n)
+            #return @. acc_base * _acc
         end
         background_models[p_AD] = background_counts
   
@@ -945,14 +948,17 @@ end
         for (c, p_AD) in enumerate(detector_list)
             EH = Newtrinos.dayabay_rewrite.retrieve_EH(p_AD)
             if EH == 1
+                println("EH1: + $(p_AD)")
                 EH1_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH1_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH1_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             elseif EH == 2
+                println("EH2: + $(p_AD)")
                 EH2_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH2_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH2_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             elseif EH ==3
+                println("EH3: + $(p_AD)")
                 EH3_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
@@ -962,15 +968,17 @@ end
     
         for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
-            ax = Axis(f[1, 1])
-            plot!(ax, assets.coarse_binning_c, o, label="Observed", color=:black)
-            stephist!(ax, assets.coarse_binning_c, weights=m, bins=assets.coarse_binning, label="Expected")
-            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v)), width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v)), alpha=0.5, label="Standard Deviation")
+            ax = Axis(f[1, 1], yscale=log10, yminorticksvisible=true, yminorticks=IntervalsBetween(9))
+            plot!(ax, assets.coarse_binning_c, o./assets.coarse_bin_width, label="Observed", color=:black)
+            stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
+            #barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v))./assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
 
             ax.xticksvisible = false
             ax.xticklabelsvisible = false
             ax2 = Axis(f[2, 1])
+
+            ax.ylabel="Counts/MeV"
 
             plot!(ax2, assets.coarse_binning_c, o ./ m, color=:black, label="Observed")
             hlines!(ax2, 1, label="Expected")
@@ -985,7 +993,7 @@ end
 
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
-            #ylims!(ax, 1e1, 1e5)
+            ylims!(ax, 1e1, 1e6)
             
 
             save("EH_$(c).png", f)
