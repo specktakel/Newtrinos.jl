@@ -73,7 +73,7 @@ baselines = YAML.load_file(joinpath(@__DIR__, "dayabay_data/parameters/baselines
 reactors = ["R$(i)" for i in 1:6]
 baselines["parameters"]["baseline"]
 
-distances = Dict()
+distances = OrderedDict()
 distances["AD"] = full_setup
 for reac in reactors
     distances[reac] = [baselines["parameters"]["baseline"][ad][reac] for ad in full_setup]
@@ -192,15 +192,17 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     eff_livetime = Float64[]
     acc_rate = Float64[]
     livetime = Float64[]
+    day = []
     foreach(x -> x[:n_det] == period ? push!(eff_livetime, x[:eff_livetime]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(acc_rate, x[:rate_accidentals]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(livetime, x[:livetime]) : 0, data["AD$(AD)"][1:end])
+    foreach(x -> x[:n_det] == period ? push!(day, x[:day]) : 0, data["AD$(AD)"][1:end])
     #foreach(x -> x[:n_det] == 6 ? push!(lt, x[:livetime]) : 0, data["AD11"][1:end])
 
     close(data)
 
     eff_livetime_seconds = sum(eff_livetime)
-    eff_livetime = eff_livetime_seconds / 60 / 60 / 24   # convert from seconds to days
+    eff_livetime_days = eff_livetime_seconds / 60 / 60 / 24   # convert from seconds to days
 
     lihe = (rate=rate_lithium_helium, shape=shape_lithium_helium, uncertainty=uncertainty_lithium_helium)
     amc = (rate=rate_amc, shape=shape_amc, uncertainty=uncertainty_amc)
@@ -215,7 +217,7 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     bg_dict["fast_neutrons"] = fast_neutrons
     bg_dict["amc"] = amc
 
-    (;observed, E_bins_MeV, E_center_MeV, bg_dict, eff_livetime_seconds, eff_livetime)
+    (;observed, E_bins_MeV, E_center_MeV, bg_dict, eff_livetime_seconds, eff_livetime, eff_livetime_days, day)
 end
 
 
@@ -296,7 +298,7 @@ function get_lsnl_correction(datadir = @__DIR__)
     pull4 = linear_interpolation(lsnl.E, lsnl.rel_3, extrapolation_bc=Flat())
     nom = linear_interpolation(lsnl.E, lsnl.f_nom, extrapolation_bc=Flat())
 
-    function lsnl(E, pull)
+    function _lsnl(E, pull)
         return @. nom(E) + pull[1] * pull1(E) + pull[2] * pull2(E) + pull[3] * pull3(E) + pull[4] * pull4(E)
     end
 end
@@ -599,7 +601,7 @@ function get_assets(datadir = @__DIR__)
     reactors = ["R$(i)" for i in 1:6]
     baselines["parameters"]["baseline"]
 
-    distances = Dict()
+    distances = OrderedDict()
     distances["AD"] = full_setup
     for reac in reactors
         distances[reac] = [baselines["parameters"]["baseline"][ad][reac] for ad in full_setup]
@@ -616,7 +618,10 @@ function get_assets(datadir = @__DIR__)
     detectors_8AD = full_setup[mask_8]
     detectors_7AD = full_setup[mask_7]
 
-    detector_dict = Dict("6AD"=>detectors_6AD, "8AD"=>detectors_8AD, "7AD"=>detectors_7AD)
+    detector_dict = OrderedDict("6AD"=>detectors_6AD, "8AD"=>detectors_8AD, "7AD"=>detectors_7AD)
+
+    ## global efficiency
+    efficiency = Float64(YAML.load_file(joinpath(datadir, "dayabay_data/parameters/detector_efficiency.yaml"))["parameters"]["efficiency"])
 
     # detector_list = vcat(full_setup[mask_6], full_setup[mask_8], full_setup[mask_7])
 
@@ -644,6 +649,9 @@ function get_assets(datadir = @__DIR__)
     
     observed = vcat(observed...)
 
+
+    ## binning
+
     data_basepath = "dayabay_data/parameters"
     coarse_binning = readdlm(joinpath(datadir, data_basepath, "final_erec_bin_edges.tsv"))[2:end];
     coarse_binning_c = (coarse_binning[2:end] + coarse_binning[1:end-1]) / 2
@@ -653,6 +661,47 @@ function get_assets(datadir = @__DIR__)
     fine_binning_Edep_c = (fine_binning_Edep[1:end-1] + fine_binning_Edep[2:end]) / 2
     fine_binning_Enu_c = (fine_binning_Enu[2:end] + fine_binning_Enu[1:end-1]) ./ 2
     fine_bin_Edep_width = diff(fine_binning_Edep)
+
+
+
+    ###read in weekly predicted neutrino counts
+    # some reactors may be offline and hence the IBD rate will be reduced for some ADs in some time window
+    # take the daily predicted neutrino rate and convert by nominal energy per fission and nominal fission fractions to an averaged thermal power
+    # this averaged thermal power is then per reactor and per AD and will be used instead of the nominal thermal power
+    # but is globally scaled by the reactor_thermal_power_scale per reactor
+
+    file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_thermal_power_nominal.yaml"))
+    nominal_thermal_power = file["parameters"]["nominal_thermal_power"]   # GW
+
+    file = h5open(joinpath(datadir, "dayabay_data/neutrino_rate.hdf5"))
+    reactor_nu_rates = Dict()
+    for r in 1:6
+        rates = Float64[]
+        n_AD = Int64[]
+        foreach(x -> (foreach(y -> (push!(rates, x[:neutrino_rate_per_s]), push!(n_AD, Int(x[:n_det]))), 1:x[:n_days])), file["R$(r)"][1:end])
+        reactor_nu_rates["R$(r)"] = (;rates, n_AD)
+    end
+    close(file)
+
+    reactor_config = Newtrinos.reactor_flux.configure()
+    energy_per_fission = reactor_config.params.energy_per_fission
+    fractions = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_fission_fractions.yaml"), dicttype=OrderedDict{String,Any})["parameters"]["fission_fractions"]
+    fractions = NamedTuple((Symbol(key),value) for (key,value) in fractions)
+    file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/antineutrinos_per_fission_huber_mueller.yaml"))
+
+    nu_per_f = file["parameters"]["antineutrinos_per_fission"]
+    nu_per_fission = NamedTuple((Symbol(key), value) for (key, value) in nu_per_f)
+    # P_th_av = # nu per second * (sum_iso fission_fraction * energy per fission) / (sum_iso fission_fraction * nu per fission)
+    # also convert from MeV to GJ
+    elementary_charge = 1.602176634e-19
+
+        #           Giga   Joule -> eV        Mega
+    GJ_to_MeV = 1e9 / elementary_charge * 1e-6 # reactor thermal power in GW, energy per fission in MeV
+
+
+    nom_conversion_factor = sum([energy_per_fission[i] * fractions[iso] for (i, iso) in enumerate(keys(fractions))]) / sum([fractions[iso] * nu_per_fission[iso] for (i, iso) in enumerate(keys(fractions))]) / GJ_to_MeV
+
+    
 
     assets = (;
         period_list,
@@ -672,6 +721,10 @@ function get_assets(datadir = @__DIR__)
         fine_binning_Edep,
         fine_binning_Edep_c,
         fine_bin_Edep_width,
+        efficiency,
+        reactor_nu_rates,
+        nom_conversion_factor,
+        nominal_thermal_power,
         observed,
     )
 end
@@ -769,7 +822,7 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
         L2 = 4 * pi .* L.^2;
         n_p = n_protons["AD$(AD)"]
 
-        lt = output.eff_livetime
+        lt = output.eff_livetime_days
         accidentals = bg_dict["accidentals"]
         
         ffs_symbols = [Symbol("fission_fractions_scale_R$(i)") for i=1:6]
@@ -811,8 +864,29 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
 
         eff_eres_key = Symbol("eff_eres_AD$(AD)")
         invL2 = inv.(L2)
+        # convert the cross section from e-41cm2 to m2 -> multiply by 1e-4
         flux_norm = 1e-45 * output.eff_livetime_seconds * n_p
 
+        integral_dEnu = fine_bin_Enu_width .* xsec_eval
+
+        # get the exposure-averaged per-AD-reactor thermal power
+        rates = assets.reactor_nu_rates
+        av_thermal_power_scale = zeros(6)
+        for r in 1:6
+            nu_per_s = rates["R$(r)"].rates
+            n_AD = rates["R$(r)"].n_AD
+
+            # check that we are in the correct period
+            @assert all(n_AD[output.day .+ 1] .== period)
+
+            exposure_weighted_nu_per_s = sum(nu_per_s[output.day .+ 1] .* output.eff_livetime) ./ sum(output.eff_livetime)
+            av_thermal_power_GW = exposure_weighted_nu_per_s * assets.nom_conversion_factor
+            av_thermal_power_scale[r] = av_thermal_power_GW / assets.nominal_thermal_power
+        end
+
+        # println(av_thermal_power_scale)
+
+        spec_prefac = av_thermal_power_scale .* invL2 .* flux_norm
         function neutrino_counts(params)
             # value type promoted over all parameter inputs, so intermediate
             # arrays stay dual even when only a subset of the parameters is dual
@@ -854,11 +928,13 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
             @inbounds for r in 1:6
                 fission_fractions = params[ffs_symbols[r]]
                 neq_scale = params[neq_symbols[r]]
-                spec .+= P[:, r] .* reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
+                spec .+= spec_prefac[r] .* P[:, r] .* reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r)
+                #spec .+= reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
             end
+            # multiply with xsec_eval and bin width for integral over neutrino energy
+            spec .*= integral_dEnu
 
-            spec .*= flux_norm .* fine_bin_Enu_width .* xsec_eval
-
+            spec_sum = sum(spec)
             smeared_spectrum = iav_func(params.iav_offdiag_scale[ad_idx], spec)
 
             # transform from Escint to Evis by lsnl and relative energy scale
@@ -871,13 +947,25 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
             # get relative efficiency and energy scale
             eff_eres = params[eff_eres_key]
 
+
+            #smeared_sum = sum(smeared_spectrum)
             resolved_spectrum = smear(E_vis, smeared_spectrum, sigma_E, E_scale=eff_eres[2], width=20);
+            resolved_sum = sum(resolved_spectrum)
+
+            """
+            if idx == 1
+                println(smeared_sum)
+                println(resolved_sum)
+                println(smeared_sum / resolved_sum)
+            end
+            """
             # Divide by bin width to get approximate pdf for integration over arbitrary bins
             spectrum_pdf = resolved_spectrum ./ diff(E_vis_edges)
 
             # exact integration of the piecewise-constant pdf over the coarse bins
             NC = length(coarse_binning) - 1
             coarse_counts = zeros(T, NC)
+            # loop over coarse bins
             @inbounds for (j, (l, h)) in enumerate(zip(coarse_binning[1:end-1], coarse_binning[2:end]))
                 s = zero(T)
                 jlo = clamp(searchsortedlast(E_vis_edges, l), 1, NFc)
@@ -890,7 +978,8 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
                 end
                 coarse_counts[j] = s
             end
-            eff_eres[1] .* coarse_counts
+           
+            eff_eres[1] .* coarse_counts .* assets.efficiency
         end
 
         neutrino_models[p_AD] = neutrino_counts
@@ -901,7 +990,8 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
     function forward_model(params)
         output = []
         for (c, p_AD) in enumerate(detector_list)
-            push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
+            #push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
+            push!(output, neutrino_models[p_AD](params))
             # break
         end
         expected = vcat(output...)
@@ -948,17 +1038,14 @@ end
         for (c, p_AD) in enumerate(detector_list)
             EH = Newtrinos.dayabay_rewrite.retrieve_EH(p_AD)
             if EH == 1
-                println("EH1: + $(p_AD)")
                 EH1_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH1_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH1_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             elseif EH == 2
-                println("EH2: + $(p_AD)")
                 EH2_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH2_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH2_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             elseif EH ==3
-                println("EH3: + $(p_AD)")
                 EH3_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_mean .+= m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH3_var .+= v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
@@ -968,10 +1055,10 @@ end
     
         for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
-            ax = Axis(f[1, 1], yscale=log10, yminorticksvisible=true, yminorticks=IntervalsBetween(9))
+            ax = Axis(f[1, 1], yminorticksvisible=true, title="EH$(c)")#yminorticks=IntervalsBetween(9))
             plot!(ax, assets.coarse_binning_c, o./assets.coarse_bin_width, label="Observed", color=:black)
             stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
-            #barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v))./assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
+            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v))./assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
 
             ax.xticksvisible = false
@@ -994,6 +1081,7 @@ end
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             ylims!(ax, 1e1, 1e6)
+            ## ylims!(ax2, 0.3, 1.0)
             
 
             save("EH_$(c).png", f)
