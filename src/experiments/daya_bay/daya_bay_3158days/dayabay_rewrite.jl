@@ -872,6 +872,7 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
         # get the exposure-averaged per-AD-reactor thermal power
         rates = assets.reactor_nu_rates
         av_thermal_power_scale = zeros(6)
+
         for r in 1:6
             nu_per_s = rates["R$(r)"].rates
             n_AD = rates["R$(r)"].n_AD
@@ -886,7 +887,8 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
 
         # println(av_thermal_power_scale)
 
-        spec_prefac = av_thermal_power_scale .* invL2 .* flux_norm
+        spec_prefac_nom_neq = av_thermal_power_scale .* invL2 .* flux_norm
+        spec_prefac_snf = flux_norm .* invL2
         function neutrino_counts(params)
             # value type promoted over all parameter inputs, so intermediate
             # arrays stay dual even when only a subset of the parameters is dual
@@ -928,7 +930,8 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
             @inbounds for r in 1:6
                 fission_fractions = params[ffs_symbols[r]]
                 neq_scale = params[neq_symbols[r]]
-                spec .+= spec_prefac[r] .* P[:, r] .* reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r)
+                flux_nom, flux_snf, correction = reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r)
+                @. spec += (spec_prefac_nom_neq[r] * flux_nom + spec_prefac_snf[r] * flux_snf) * P[:, r] * correction
                 #spec .+= reactor_flux(fine_binning_Enu_c, params.reactor_thermal_power_scale[r], params.energy_per_fission, fission_fractions, params.spectrum_pulls, neq_scale, params.snf_scale[r], r) .* invL2[r]
             end
             # multiply with xsec_eval and bin width for integral over neutrino energy
@@ -990,8 +993,9 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
     function forward_model(params)
         output = []
         for (c, p_AD) in enumerate(detector_list)
-            #push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
-            push!(output, neutrino_models[p_AD](params))
+            push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
+            #push!(output, neutrino_models[p_AD](params))
+            #push!(output, background_models[p_AD](params))
             # break
         end
         expected = vcat(output...)
@@ -1055,10 +1059,10 @@ end
     
         for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             f = Figure()
-            ax = Axis(f[1, 1], yminorticksvisible=true, title="EH$(c)")#yminorticks=IntervalsBetween(9))
+            ax = Axis(f[1, 1], yminorticksvisible=true, title="EH$(c)")#, yminorticks=IntervalsBetween(9), yscale=log10)
             plot!(ax, assets.coarse_binning_c, o./assets.coarse_bin_width, label="Observed", color=:black)
             stephist!(ax, assets.coarse_binning_c, weights=m./assets.coarse_bin_width, bins=assets.coarse_binning, label="Expected")
-            barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v))./assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
+            #barplot!(ax, assets.coarse_binning_c, (m .+ sqrt.(v))./assets.coarse_bin_width, width=assets.coarse_bin_width, gap=0, fillto= (m.- sqrt.(v))./assets.coarse_bin_width, alpha=0.5, label="Standard Deviation")
             axislegend(ax, framevisible = false)
 
             ax.xticksvisible = false

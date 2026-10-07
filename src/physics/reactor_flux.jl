@@ -435,7 +435,7 @@ function get_flux(cfg::DayaBayFlux; datadir = datadir)
             ) / sum(
                 [fission_fractions_scale[i] * fractions[iso] * energy_per_fission[i] for (i, iso) in enumerate(names)]
             )
-        return (flux .+ snf_flux(E, snf_scale, reac_idx)) .* correction(E, pulls)
+        return flux, snf_flux(E, snf_scale, reac_idx), correction(E, pulls)
     end
 
     reactor_flux
