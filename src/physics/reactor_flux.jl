@@ -173,7 +173,7 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
     fission_fractions_scale_R5 = Distributions.MvNormal(mu, cov_mat)
     fission_fractions_scale_R6 = Distributions.MvNormal(mu, cov_mat)
 
-    spectrum_pulls = Distributions.MvNormal(ones(19), Diagonal(ones(19)))
+    spectrum_pulls = Distributions.Uniform.(zeros(19), 2 .* ones(19))
 
     ## non-equilibrium correction
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_nonequilibrium_correction.yaml"))
@@ -190,9 +190,9 @@ function get_priors(flux::DayaBayFlux; datadir = datadir)
 
     # snf correction
     file = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/reactor_snf.yaml"))
-    mu = file["parameters"]["snf_scale"][1]
-    sigma = file["parameters"]["snf_scale"][2] * 0.01   # percent
-    snf_scale = Distributions.MvNormal(ones(6) .* mu, Diagonal(ones(6) .* sigma.^2))
+    mu = file["parameters"]["snf_scale"][1] .* ones(6)
+    sigma = mu .* file["parameters"]["snf_scale"][2] .* 0.01   # percent
+    snf_scale = Distributions.MvNormal(mu, Diagonal(sigma.^2))
 
 
     priors = (;

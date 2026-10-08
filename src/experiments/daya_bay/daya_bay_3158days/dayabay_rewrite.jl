@@ -257,15 +257,15 @@ function read_lsnl_correction(datadir = @__DIR__)
     file = h5open(joinpath(datadir, "dayabay_data/detector_lsnl_curves.hdf5"))
 
     f_nom = Float64[]
-    pull0 = []
-    pull1 = []
-    pull2 = []
-    pull3 = []
+    pull0 = Float64[]
+    pull1 = Float64[]
+    pull2 = Float64[]
+    pull3 = Float64[]
     E = Float64[]
-    E0 = []
-    E1 = []
-    E2 = []
-    E3 = []
+    E0 = Float64[]
+    E1 = Float64[]
+    E2 = Float64[]
+    E3 = Float64[]
     foreach(x -> (push!(E, x[1]), push!(f_nom, x[2])), file["nominal"][1:end])
     foreach(x -> (push!(E0, x[1]), push!(pull0, x[2])), file["pull0"][1:end])
     foreach(x -> (push!(E1, x[1]), push!(pull1, x[2])), file["pull1"][1:end])
@@ -590,16 +590,15 @@ function get_assets(datadir = @__DIR__)
     @info "Loading DayaBay data"
     period_list = ["6AD", "8AD", "7AD"]
 
-    EH_list = [1, 2, 3]
+    EH_list = Int64[1, 2, 3]
 
-    full_setup = ["AD11", "AD12", "AD21", "AD22", "AD31", "AD32", "AD33", "AD34"]
-    mask_6 =     [true,   true,   true,   false,  true,   true,   true,   false]
-    mask_8 =     [true,   true,   true,   true,   true,   true,   true,   true]
-    mask_7 =     [false,  true,   true,   true,   true,   true,   true,   true]
+    full_setup = String["AD11", "AD12", "AD21", "AD22", "AD31", "AD32", "AD33", "AD34"]
+    mask_6 =     Bool[true,   true,   true,   false,  true,   true,   true,   false]
+    mask_8 =     Bool[true,   true,   true,   true,   true,   true,   true,   true]
+    mask_7 =     Bool[false,  true,   true,   true,   true,   true,   true,   true]
 
     baselines = YAML.load_file(joinpath(datadir, "dayabay_data/parameters/baselines.yaml"))
-    reactors = ["R$(i)" for i in 1:6]
-    baselines["parameters"]["baseline"]
+    reactors = String["R$(i)" for i in 1:6]
 
     distances = OrderedDict()
     distances["AD"] = full_setup
@@ -632,14 +631,14 @@ function get_assets(datadir = @__DIR__)
         end
     end
 
-    detector_list = []
+    detector_list = String[]
     for p in period_list
         for AD in detector_dict[p]
             push!(detector_list, "$(p)$(AD)")
         end
     end
 
-    observed = []
+    observed = Vector{Vector{Int64}}(undef, 0)
     for p_AD in detector_list
         AD = retrieve_AD(p_AD)
         period = retrieve_period(p_AD)
@@ -648,6 +647,7 @@ function get_assets(datadir = @__DIR__)
     end
     
     observed = vcat(observed...)
+    #observed = observed[1]
 
 
     ## binning
@@ -842,13 +842,58 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
         alpha_n_base = lt .* alpha_n.shape
 
         function background_counts(params)
+            """
+            T = promote_type(
+                eltype(params.eres_a),
+                eltype(params.eres_b),
+                eltype(params.eres_c),
+                eltype(params.lsnl_pull),
+                eltype(params.iav_offdiag_scale),
+                eltype(params.reactor_thermal_power_scale),
+                eltype(params.energy_per_fission),
+                eltype(params.fission_fractions_scale_R1),
+                eltype(params.fission_fractions_scale_R2),
+                eltype(params.fission_fractions_scale_R3),
+                eltype(params.fission_fractions_scale_R4),
+                eltype(params.fission_fractions_scale_R5),
+                eltype(params.fission_fractions_scale_R6),
+                eltype(params.neq_scale_R1),
+                eltype(params.neq_scale_R2),
+                eltype(params.neq_scale_R3),
+                eltype(params.neq_scale_R4),
+                eltype(params.neq_scale_R5),
+                eltype(params.neq_scale_R6),
+                eltype(params.snf_scale),
+                eltype(params.spectrum_pulls),
+                eltype(params.acc_scale),
+                eltype(params.alpha_n_rate),
+                eltype(params.fast_n_unc_scale),
+                eltype(params.lihe_unc_scale),
+                eltype(params.amc_unc_scale),
+                eltype(params.eff_eres_AD11),
+                eltype(params.eff_eres_AD12),
+                eltype(params.eff_eres_AD21),
+                eltype(params.eff_eres_AD22),
+                eltype(params.eff_eres_AD31),
+                eltype(params.eff_eres_AD32),
+                eltype(params.eff_eres_AD33),
+                eltype(params.eff_eres_AD34),
+                eltype(params.energy_per_fission),
+                eltype(params.θ₁₃),
+                eltype(params.θ₁₂),
+                eltype(params.θ₂₃),
+                eltype(params.Δm²₂₁),
+                eltype(params.Δm²₃₁),
+                eltype(params.δCP),
+            )
+            """
 
             ## background stuff
             # part of forward model
             _acc = params.acc_scale[idx]
-            _amc = 1 + amc.uncertainty * params.amc_unc_scale
-            _lihe = 1 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]
-            _fast_n = 1 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]
+            _amc = 1.0 + amc.uncertainty * params.amc_unc_scale
+            _lihe = 1.0 + lihe.uncertainty * params.lihe_unc_scale[period_EH_idx]
+            _fast_n = 1.0 + fast_n.uncertainty * params.fast_n_unc_scale[period_EH_idx]
             _alpha_n = params.alpha_n_rate[idx]
 
             return @. acc_base * _acc + amc_base * _amc + lihe_base * _lihe + fast_n_base * _fast_n + alpha_n_base * _alpha_n
@@ -892,7 +937,7 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
         function neutrino_counts(params)
             # value type promoted over all parameter inputs, so intermediate
             # arrays stay dual even when only a subset of the parameters is dual
-            T = Base.promote_type(
+            T = promote_type(
                 eltype(params.eres_a),
                 eltype(params.eres_b),
                 eltype(params.eres_c),
@@ -914,6 +959,20 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
                 eltype(params.neq_scale_R6),
                 eltype(params.snf_scale),
                 eltype(params.spectrum_pulls),
+                eltype(params.acc_scale),
+                eltype(params.alpha_n_rate),
+                eltype(params.fast_n_unc_scale),
+                eltype(params.lihe_unc_scale),
+                eltype(params.amc_unc_scale),
+                eltype(params.eff_eres_AD11),
+                eltype(params.eff_eres_AD12),
+                eltype(params.eff_eres_AD21),
+                eltype(params.eff_eres_AD22),
+                eltype(params.eff_eres_AD31),
+                eltype(params.eff_eres_AD32),
+                eltype(params.eff_eres_AD33),
+                eltype(params.eff_eres_AD34),
+                eltype(params.energy_per_fission),
                 eltype(params.θ₁₃),
                 eltype(params.θ₁₂),
                 eltype(params.θ₂₃),
@@ -991,13 +1050,59 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
     end
 
     function forward_model(params)
+        """
+        T = promote_type(
+                eltype(params.eres_a),
+                eltype(params.eres_b),
+                eltype(params.eres_c),
+                eltype(params.lsnl_pull),
+                eltype(params.iav_offdiag_scale),
+                eltype(params.reactor_thermal_power_scale),
+                eltype(params.energy_per_fission),
+                eltype(params.fission_fractions_scale_R1),
+                eltype(params.fission_fractions_scale_R2),
+                eltype(params.fission_fractions_scale_R3),
+                eltype(params.fission_fractions_scale_R4),
+                eltype(params.fission_fractions_scale_R5),
+                eltype(params.fission_fractions_scale_R6),
+                eltype(params.neq_scale_R1),
+                eltype(params.neq_scale_R2),
+                eltype(params.neq_scale_R3),
+                eltype(params.neq_scale_R4),
+                eltype(params.neq_scale_R5),
+                eltype(params.neq_scale_R6),
+                eltype(params.snf_scale),
+                eltype(params.spectrum_pulls),
+                eltype(params.acc_scale),
+                eltype(params.alpha_n_rate),
+                eltype(params.fast_n_unc_scale),
+                eltype(params.lihe_unc_scale),
+                eltype(params.amc_unc_scale),
+                eltype(params.eff_eres_AD11),
+                eltype(params.eff_eres_AD12),
+                eltype(params.eff_eres_AD21),
+                eltype(params.eff_eres_AD22),
+                eltype(params.eff_eres_AD31),
+                eltype(params.eff_eres_AD32),
+                eltype(params.eff_eres_AD33),
+                eltype(params.eff_eres_AD34),
+                eltype(params.energy_per_fission),
+                eltype(params.θ₁₃),
+                eltype(params.θ₁₂),
+                eltype(params.θ₂₃),
+                eltype(params.Δm²₂₁),
+                eltype(params.Δm²₃₁),
+                eltype(params.δCP),
+            )
+            """
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
             #push!(output, neutrino_models[p_AD](params))
-            #push!(output, background_models[p_AD](params))
+        #    push!(output, background_models[p_AD](params))
             # break
         end
+        #distprod(Poisson.(background_models[detector_list[1]](params)))
         expected = vcat(output...)
         distprod(Poisson.(expected))
     end
