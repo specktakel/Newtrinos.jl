@@ -16,21 +16,26 @@ using Newtrinos
         reactor = Newtrinos.reactor_flux.configure()
         flux = reactor.flux
         params = reactor.params
-        val1 = flux(3, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
-        val2 = flux(2, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
-        vals1_2 = flux([3, 2],  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
-        @test isapprox(vals1_2, [val1, val2])
+        nom1, snf1, corr1 = flux(3, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
+        nom2, snf2, corr2 = flux(2, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
+        nom12, snf12, corr12 = flux([3, 2],  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
+        @test isapprox(nom12, [nom1, nom2])
+        @test isapprox(snf12, [snf1, snf2])
+        @test isapprox(corr12, [corr1, corr2])
         @reset params.neq_scale_R1 = zeros(4)
-        val1 = flux(3,  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, 1, 1)
-        val2 = flux(3,  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, 0, 1)
-        @test val1 / val2 <= 1.04
+        nom1, snf1, corr1 = flux(3,  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, 1, 1)
+        nom2, snf2, corr2 = flux(3,  params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, 0, 1)
+        @test isapprox(nom1, nom2)
+        @test isapprox(corr1, corr2)
+        @test isapprox(snf2, 0.0)
+        @test 0 < snf1 / nom2 <= 0.04
         
         @reset params.reactor_thermal_power_scale = 1.0
         @reset params.snf_scale = zeros(6)
-        flux_vals = flux(E, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
+        nom1, snf1, corr1 = flux(E, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
         @reset params.reactor_thermal_power_scale = 2.0
-        flux_val_higher = flux(E, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
-        @test isapprox(flux_vals .* 2, flux_val_higher)
+        nom2, snf2, corr2 = flux(E, params.reactor_thermal_power_scale[1], params.energy_per_fission, params.fission_fractions_scale_R1, params.spectrum_pulls, params.neq_scale_R1, params.snf_scale[1], 1)
+        @test isapprox(nom1 .* 2, nom2)
     end
 
 end
