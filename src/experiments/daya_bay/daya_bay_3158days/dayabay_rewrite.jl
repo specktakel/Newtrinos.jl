@@ -192,7 +192,7 @@ function extract_for_AD_period(AD::Int, period::Int, datadir = @__DIR__)
     eff_livetime = Float64[]
     acc_rate = Float64[]
     livetime = Float64[]
-    day = []
+    day = Int64[]
     foreach(x -> x[:n_det] == period ? push!(eff_livetime, x[:eff_livetime]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(acc_rate, x[:rate_accidentals]) : 0, data["AD$(AD)"][1:end])
     foreach(x -> x[:n_det] == period ? push!(livetime, x[:livetime]) : 0, data["AD$(AD)"][1:end])
@@ -789,12 +789,14 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
     coarse_binning = assets.coarse_binning
     coarse_binning_c = assets.coarse_binning_c
     coarse_bin_width = assets.coarse_bin_width
-    fine_binning_Enu = assets.fine_binning_Enu
-    fine_binning_Enu_c = assets.fine_binning_Enu_c
-    fine_bin_Enu_width = diff(fine_binning_Enu)
+    #fine_binning_Enu = assets.fine_binning_Enu
+    #fine_binning_Enu_c = assets.fine_binning_Enu_c
     fine_binning_Edep = assets.fine_binning_Edep
     fine_binning_Edep_c = assets.fine_binning_Edep_c
     fine_bin_Edep_width = assets.fine_bin_Edep_width
+    fine_binning_Enu = physics.xsec.Enu.(fine_binning_Edep)
+    fine_binning_Enu_c = physics.xsec.Enu.(fine_binning_Edep_c)
+    fine_bin_Enu_width = diff(fine_binning_Enu)
     
     xsec_eval = xsec.(fine_binning_Enu_c)
 
@@ -842,52 +844,6 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
         alpha_n_base = lt .* alpha_n.shape
 
         function background_counts(params)
-            """
-            T = promote_type(
-                eltype(params.eres_a),
-                eltype(params.eres_b),
-                eltype(params.eres_c),
-                eltype(params.lsnl_pull),
-                eltype(params.iav_offdiag_scale),
-                eltype(params.reactor_thermal_power_scale),
-                eltype(params.energy_per_fission),
-                eltype(params.fission_fractions_scale_R1),
-                eltype(params.fission_fractions_scale_R2),
-                eltype(params.fission_fractions_scale_R3),
-                eltype(params.fission_fractions_scale_R4),
-                eltype(params.fission_fractions_scale_R5),
-                eltype(params.fission_fractions_scale_R6),
-                eltype(params.neq_scale_R1),
-                eltype(params.neq_scale_R2),
-                eltype(params.neq_scale_R3),
-                eltype(params.neq_scale_R4),
-                eltype(params.neq_scale_R5),
-                eltype(params.neq_scale_R6),
-                eltype(params.snf_scale),
-                eltype(params.spectrum_pulls),
-                eltype(params.acc_scale),
-                eltype(params.alpha_n_rate),
-                eltype(params.fast_n_unc_scale),
-                eltype(params.lihe_unc_scale),
-                eltype(params.amc_unc_scale),
-                eltype(params.eff_eres_AD11),
-                eltype(params.eff_eres_AD12),
-                eltype(params.eff_eres_AD21),
-                eltype(params.eff_eres_AD22),
-                eltype(params.eff_eres_AD31),
-                eltype(params.eff_eres_AD32),
-                eltype(params.eff_eres_AD33),
-                eltype(params.eff_eres_AD34),
-                eltype(params.energy_per_fission),
-                eltype(params.θ₁₃),
-                eltype(params.θ₁₂),
-                eltype(params.θ₂₃),
-                eltype(params.Δm²₂₁),
-                eltype(params.Δm²₃₁),
-                eltype(params.δCP),
-            )
-            """
-
             ## background stuff
             # part of forward model
             _acc = params.acc_scale[idx]
@@ -1050,56 +1006,11 @@ function get_forward_model(physics, assets; datadir = @__DIR__, debug = false)
     end
 
     function forward_model(params)
-        """
-        T = promote_type(
-                eltype(params.eres_a),
-                eltype(params.eres_b),
-                eltype(params.eres_c),
-                eltype(params.lsnl_pull),
-                eltype(params.iav_offdiag_scale),
-                eltype(params.reactor_thermal_power_scale),
-                eltype(params.energy_per_fission),
-                eltype(params.fission_fractions_scale_R1),
-                eltype(params.fission_fractions_scale_R2),
-                eltype(params.fission_fractions_scale_R3),
-                eltype(params.fission_fractions_scale_R4),
-                eltype(params.fission_fractions_scale_R5),
-                eltype(params.fission_fractions_scale_R6),
-                eltype(params.neq_scale_R1),
-                eltype(params.neq_scale_R2),
-                eltype(params.neq_scale_R3),
-                eltype(params.neq_scale_R4),
-                eltype(params.neq_scale_R5),
-                eltype(params.neq_scale_R6),
-                eltype(params.snf_scale),
-                eltype(params.spectrum_pulls),
-                eltype(params.acc_scale),
-                eltype(params.alpha_n_rate),
-                eltype(params.fast_n_unc_scale),
-                eltype(params.lihe_unc_scale),
-                eltype(params.amc_unc_scale),
-                eltype(params.eff_eres_AD11),
-                eltype(params.eff_eres_AD12),
-                eltype(params.eff_eres_AD21),
-                eltype(params.eff_eres_AD22),
-                eltype(params.eff_eres_AD31),
-                eltype(params.eff_eres_AD32),
-                eltype(params.eff_eres_AD33),
-                eltype(params.eff_eres_AD34),
-                eltype(params.energy_per_fission),
-                eltype(params.θ₁₃),
-                eltype(params.θ₁₂),
-                eltype(params.θ₂₃),
-                eltype(params.Δm²₂₁),
-                eltype(params.Δm²₃₁),
-                eltype(params.δCP),
-            )
-            """
         output = []
         for (c, p_AD) in enumerate(detector_list)
             push!(output, background_models[p_AD](params) .+ neutrino_models[p_AD](params))
             #push!(output, neutrino_models[p_AD](params))
-        #    push!(output, background_models[p_AD](params))
+            #push!(output, background_models[p_AD](params))
             # break
         end
         #distprod(Poisson.(background_models[detector_list[1]](params)))
@@ -1124,7 +1035,7 @@ end
         v = var(get_forward_model(physics, assets)(params))
         
         detector_list = assets.detector_list
-                # number of analysis bins
+        # number of analysis bins
         n_ana_binning = length(assets.coarse_binning_c)
 
         EH1_obs = zeros(n_ana_binning)

@@ -27,6 +27,8 @@ struct StrumiaVissani <: IBDModel end
     params::NamedTuple
     priors::NamedTuple
     xsec::Function
+    Epos::Function
+    Enu::Function
 end
 
 
@@ -35,7 +37,9 @@ function configure(cfg::IBDModel=StrumiaVissani())
         cfg = cfg,
         params = get_params(cfg),
         priors = get_priors(cfg),
-        xsec = get_xsec(cfg)
+        xsec = get_xsec(cfg)[1],
+        Epos = get_xsec(cfg)[2],
+        Enu = get_xsec(cfg)[3],
     )
 end
 
@@ -55,7 +59,15 @@ function get_xsec(cfg::StrumiaVissani)
     xsec = CSV.read(joinpath(@__DIR__, "ibd_xsec.csv"), DataFrame, header=0, delim=",")
     energies = reshape(Matrix(xsec[!, [1, 5, 9]]), (45))
     xsection = reshape(Matrix(xsec[!, [2, 6, 10]]), (45))
+    #Epos1 = [parse(Float64, i) for i in collect(xsec[!, 3])[2:end]]
+    #Epos2 = reshape(Matrix(xsec[!, [7, 11]]), (30))
+    #println(Epos1)
+    #println(Epos2)
+    #Epos = vcat(Epos1, Epos2)
+    Epos = reshape(Matrix(xsec[!, [3, 7, 11]]), (45))
+    _Epos_itp = Interpolator(energies, Epos, extrapolate=true);
     _x_sec_itp = Interpolator(energies, xsection, extrapolate=true);
+    _Enu_itp = Interpolator(Epos, energies, extrapolate=true);
 
     # impose zero as lower bound
     function x_sec_itp(x)
@@ -66,7 +78,24 @@ function get_xsec(cfg::StrumiaVissani)
         end
     end
 
-    return x_sec_itp
+    function E_pos_interp(x)
+        out = _Epos_itp(x)
+        #if x < energies[2]
+        if x < energies[1]
+            return 0.
+        else
+            return out
+        end
+    end
+
+    function E_nu_interp(x)
+        # maps from deposited to neutrino,
+        # hence subtract electron mass
+        out = _Enu_itp.(x) - 0.511
+    end
+
+
+    return x_sec_itp, E_pos_interp, E_nu_interp
 end
 
 end
