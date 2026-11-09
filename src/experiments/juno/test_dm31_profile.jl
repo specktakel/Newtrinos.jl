@@ -82,18 +82,18 @@ NO_off = convert.(Float64, NO_off[NO_off[:, 1] .== "NO", 2:3]);
 
 dayabay_NO = Normal(2.5413e-3, 0.060e-3)
 dayabay_IO = Normal(-2.4957e-3, 0.060e-3)
-base = maximum([-maximum(IO.values.log_posterior), -maximum(NO.values.log_posterior)])
+base = minimum([-maximum(results[:IO].values.log_posterior), -maximum(results[:NO].values.log_posterior)])
 
 f = Figure()
 ax_IO = Axis(f[1, 1], xlabel="Δm²₃₁ [eV²]", ylabel="-2 * ΔLLH", xminorticks=  IntervalsBetween(5), title="IO", yminorticksvisible = true, yticks=0:5:30)
 ax_NO = Axis(f[1, 2], xlabel="Δm²₃₁ [eV²]", xminorticks=  IntervalsBetween(5), title="NO", yminorticksvisible = true, yticks=0:5:30,yaxisposition = :right)
 
 axes = [ax_IO, ax_NO]
-lines!(ax_IO, IO.axes.Δm²₃₁, 2 .* (-IO.values.log_posterior .- base), label="Newtrinos.jl")
-lines!(ax_NO, NO.axes.Δm²₃₁, 2 .* (-NO.values.log_posterior .- base))
+lines!(ax_IO, results[:IO].axes.delta2m31, 2 .* (-results[:IO].values.log_posterior .- base), label="Newtrinos.jl")
+lines!(ax_NO, results[:NO].axes.delta2m31, 2 .* (-results[:NO].values.log_posterior .- base))
 
-for (a, db, res) in zip(axes, [dayabay_IO, dayabay_NO], [IO, NO])
-    x = collect(LinRange(res.axes.Δm²₃₁[1], res.axes.Δm²₃₁[end], 1000))
+for (a, db, res) in zip(axes, [dayabay_IO, dayabay_NO], [results[:IO], results[:NO]])
+    x = collect(LinRange(res.axes.delta2m31[1], res.axes.delta2m31[end], 1000))
  
     lines!(a, x, 2 * (-logdensityof.(db, x) .+ logdensityof(db, mean(db))), label="DayaBay constraint")
 end
