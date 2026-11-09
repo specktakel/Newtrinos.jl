@@ -61,48 +61,41 @@ for (c, ordering) in enumerate([:NO, :IO])
     end
 
     vars_to_scan = OrderedDict()
-    vars_to_scan[:Δm²₃₁] = 2
+    vars_to_scan[:Δm²₃₁] = 120
     result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="combined_scratch_$(String(ordering))")
     FileIO.save("combined_output/test_dm31_juno_tao_$(String(ordering)).jld2", Dict("result" => result))
-    converted = Newtrinos.NewtrinosResult(axes = (delta2m31= result.axes.Δm²₃₁), values=result.values);
+    converted = Newtrinos.NewtrinosResult(axes = (delta2m31= result.axes.Δm²₃₁,), values=result.values);
     results[ordering] = converted
 end
+
 f = Figure()
 ax = Axis(f[1, 1], )
-"""
-
-ax = Axis(f[1, 1])
-ax.title = "Juno test"
-plot!(ax, converted, levels=1 .- 2*ccdf(Normal(), 1:3), label="ours; 1,2,3sigma")
-juno_1sigma = readdlm("207_days/fig_6_contour.txt", skipstart=25);
-scatter!(ax, 0.3036, 7.388e-5, label="Juno MLE")
-lines!(ax, juno_1sigma[:, 1], juno_1sigma[:, 2] .* 1e-5)
-axislegend(ax)
-save("combined_output/dm21_theta12_juno_tao.png", f)
 
 
 
 dayabay_NO = Normal(2.5413e-3, 0.060e-3)
 dayabay_IO = Normal(-2.4957e-3, 0.060e-3)
-
+base = maximum([-maximum(IO.values.log_posterior), -maximum(NO.values.log_posterior)])
 
 f = Figure()
-ax = Axis(f[1, 1], xlabel="Δ²₃₁", ylabel="-2 * ΔLLH", xminorticks=  IntervalsBetween(5), title="IO", yminorticksvisible = true, yticks=0:5:30)
-ax2 = Axis(f[1, 2], xlabel="Δ²₃₁", xminorticks=  IntervalsBetween(5), title="NO", yminorticksvisible = true, yticks=0:5:30,yaxisposition = :right)
-lines!(ax, IO.axes.Δm²₃₁, 2 .* (-IO.values.log_posterior .- base))
-lines!(ax2, NO.axes.Δm²₃₁, 2 .* (-NO.values.log_posterior .- base))
+ax_IO = Axis(f[1, 1], xlabel="Δm²₃₁ [eV²]", ylabel="-2 * ΔLLH", xminorticks=  IntervalsBetween(5), title="IO", yminorticksvisible = true, yticks=0:5:30)
+ax_NO = Axis(f[1, 2], xlabel="Δm²₃₁ [eV²]", xminorticks=  IntervalsBetween(5), title="NO", yminorticksvisible = true, yticks=0:5:30,yaxisposition = :right)
 
-for (a, db, res) in zip([ax, ax2], [dayabay_IO, dayabay_NO], [IO, NO])
+axes = [ax_IO, ax_NO]
+lines!(ax_IO, IO.axes.Δm²₃₁, 2 .* (-IO.values.log_posterior .- base), label="Newtrinos.jl")
+lines!(ax_NO, NO.axes.Δm²₃₁, 2 .* (-NO.values.log_posterior .- base))
+
+for (a, db, res) in zip(axes, [dayabay_IO, dayabay_NO], [IO, NO])
     x = collect(LinRange(res.axes.Δm²₃₁[1], res.axes.Δm²₃₁[end], 1000))
  
-    lines!(a, x, 1 / 2 * (-logdensityof.(db, x) .+ logdensityof(db, mean(db)))) # why is the factor 1/2 necessary?!
+    lines!(a, x, 2 * (-logdensityof.(db, x) .+ logdensityof(db, mean(db))), label="DayaBay constraint")
 end
 
-
-for a in [ax, ax2]
+juno_off = [IO_off, NO_off]
+for (a, off) in zip(axes, juno_off)
     ylims!(a, 0., 30)
+    lines!(a, off[:, 1] .* 1e-3, off[:, 2], label="Juno Δχ²")
 end
-
+f[0, 1:2] = Legend(f, [ax_IO, ax_NO], orientation=:horizontal, merge=true)
 f
 save("combined_output/delta_m31.png", f)
-"""
