@@ -72,6 +72,13 @@ f = Figure()
 ax = Axis(f[1, 1], )
 
 
+IO_off = readdlm("207_days/fig_4_chi2.txt", skipstart=25)
+IO_off = convert.(Float64, IO_off[IO_off[:, 1] .== "IO", 2:3])
+
+
+NO_off = readdlm("207_days/fig_4_chi2.txt", skipstart=25)
+NO_off = convert.(Float64, NO_off[NO_off[:, 1] .== "NO", 2:3]);
+
 
 dayabay_NO = Normal(2.5413e-3, 0.060e-3)
 dayabay_IO = Normal(-2.4957e-3, 0.060e-3)
