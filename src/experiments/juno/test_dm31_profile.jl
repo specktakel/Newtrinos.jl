@@ -44,9 +44,11 @@ for (c, ordering) in enumerate([:NO, :IO])
     @reset priors.δCP = p.δCP 
     @reset priors.Δm²₂₁ = Uniform(7.1e-5, 7.9e-5)
     @reset priors.θ₁₂ = Uniform(asin(sqrt(0.275)), asin(sqrt(0.32)))
-    #@reset priors.juno_geo_rate = 2.12
     @reset priors.θ₁₃ = Normal(theta13, theta13_sigma)
-    #@reset priors.Δm²₃₁ = Normal(2.509e-3, 0.027e-3)
+    @reset p.Δm²₃₁ = 2.5413e-3
+    @reset p.θ₁₃ = theta13
+    @reset p.Δm²₂₁ = 7.388e-5
+    @reset p.θ₁₂ = asin(sqrt(0.3036))
     low = 1.8e-3
     high = 3.0e-3
     if ordering == :NO
