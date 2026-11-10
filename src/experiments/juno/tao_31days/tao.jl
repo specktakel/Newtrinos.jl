@@ -1,4 +1,4 @@
-module tao_rewrite
+module tao
 
 using DataFrames
 using CSV
@@ -71,7 +71,7 @@ end
 function get_priors()
 
     ## fission fraction scale
-    data = YAML.load_file(joinpath(@__DIR__, "../daya_bay/daya_bay_3158days/dayabay_data/parameters/reactor_fission_fractions_scale.yaml"), dicttype=OrderedDict{String,Any})
+    data = YAML.load_file(joinpath(Newtrinos.dayabay_flux.datadir, "dayabay_data/parameters/reactor_fission_fractions_scale.yaml"), dicttype=OrderedDict{String,Any})
     fraction_scale = data["parameters"]["fission_fractions_scale"]
 
     isotopes = ["U235", "U238", "Pu239", "Pu241"]
@@ -165,7 +165,7 @@ function get_lsnl_correction()
     pull_curve = Newtrinos.Helpers.refine_lsnl(E, nom_itp(E) ./E .+ m, x)[2] - nom
     pull_itp = linear_interpolation(x, pull_curve, extrapolation_bc=Line()) 
 
-    juno = readdlm(joinpath(@__DIR__, "207_days/lsnl_nom_coarse.txt"), skipstart=11)
+    juno = readdlm(joinpath(@__DIR__, "../juno_207days/207_days/lsnl_nom_coarse.txt"), skipstart=11)
     E_juno = juno[:, 1]
     juno_pull = Newtrinos.Helpers.refine_lsnl(E_juno, juno[:, 2], x)[2] - nom
     juno_itp = linear_interpolation(x, juno_pull, extrapolation_bc=Line())
