@@ -1201,7 +1201,7 @@ end
 
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
-            ylims!(ax, 1e0, 1e4)
+            #ylims!(ax, 1e0, 1e4)
 
             save(joinpath(saveto, "$(period)ADAD$(AD).png"), f)
             

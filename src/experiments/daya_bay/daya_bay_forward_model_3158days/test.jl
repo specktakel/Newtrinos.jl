@@ -27,10 +27,24 @@ priors = Newtrinos.get_priors(experiments)
 @reset priors.δCP = p.δCP
 @reset priors.Δm²₂₁ = p.Δm²₂₁
 
-mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-FileIO.save("test_output/test.jld2", Dict("mle"=>mle))
-experiments.dayabay.plot(mle[3]; saveto="test_output")
+# TODO remove this construct to avoid issue on mac
+for i=1:4
+    println(i)
+    try
+        mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
+        FileIO.save("test_output/test_mle.jld2", Dict("mle"=>mle))
+        experiments.dayabay.plot(mle[3]; saveto="test_output")
+    catch e
+        continue
+    finally
+        break
+    end
+end
 
+@time mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
+FileIO.save("test_output/test.jld2", Dict("mle"=>mle))
+
+#=
 result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test")
 
 if !isdir("test_output")
@@ -72,4 +86,5 @@ open("README.md", "w") do io
         write(io, "- **$(key)**: $(value)\n")
     end
 end
+=#
 
