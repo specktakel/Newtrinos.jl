@@ -8,7 +8,7 @@ using Accessors
 using CairoMakie
 using CSV, DataFrames
 
-experiments = (dayabay = Newtrinos.dayabay_rewrite.configure(),)
+experiments = (dayabay = Newtrinos.dayabay.configure(),)
 
 vars_to_scan = OrderedDict()
 vars_to_scan[:θ₁₃] = 11
@@ -27,10 +27,6 @@ priors = Newtrinos.get_priors(experiments)
 @reset priors.δCP = p.δCP
 @reset priors.Δm²₂₁ = p.Δm²₂₁
 
-result = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-FileIO.save("test_output/test_rewrite_full_replaced_livetime.jld2", Dict("logllh"=> result[1], "logposterior"=>result[2], "mle"=>result[3]))
-
-"""
 result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test")
 
 if !isdir("test_output")
@@ -56,7 +52,17 @@ save("test_output/contours.png", fig)
 
 bestfit = Newtrinos.bestfit(result)
 
-"""
-#fig = experiments.dayabay.plot(bestfit)
-#save("test_output/datamc.png", fig)
+fig = experiments.dayabay.plot(bestfit)
+save("test_output/datamc.png", fig)
 
+open("README.md", "w") do io
+    write(io, "# DayaBay\n ## Resources\n")
+    write(io, "Data from supplemental files on https://arxiv.org/abs/2211.14988\n\n")
+    write(io, "\n## Test output plots\n")
+    write(io, "![Comparison](test_output/contours.png)\n")
+    write(io, "![DataMC](test_output/datamc.png)\n")
+    write(io, "## Meta Information\n")
+    for (key, value) in result.meta
+        write(io, "- **$(key)**: $(value)\n")
+    end
+end
