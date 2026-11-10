@@ -29,13 +29,9 @@ f = experiments.tao.plot(mle[3])
 save("test_output/tao_spectrum.png", f)
 
 open("README.md", "w") do io
-    write(io, "#TAO \n ## Resources\n")
+    write(io, "# TAO \n## Resources\n")
     write(io, "Data from https://arxiv.org/pdf/2610.23331, data read off by claude\n\n")
     write(io, "\n## Test output plots\n")
     write(io, "These plots are generated using 25 pull parameters on the reactor spectrum.")
     write(io, "![Comparison](test_output/tao_spectrum.png)\n")
-    write(io, "## Meta Information\n")
-    for (key, value) in result.meta
-        write(io, "- **$(key)**: $(value)\n")
-    end
 end
