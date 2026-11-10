@@ -1,4 +1,4 @@
-module dayabay_rewrite
+module dayabay_forward
 
 using DataFrames
 using CSV
@@ -1130,7 +1130,7 @@ end
             fast_n = bg_dict["fast_neutrons"]
             alpha_n = bg_dict["alpha_neutron"]
 
-            EH = Newtrinos.dayabay_rewrite.retrieve_EH(p_AD)
+            EH = retrieve_EH(p_AD)
             if EH == 1
                 EH1_obs .+= data[(c-1) * n_ana_binning + 1:c*n_ana_binning]
                 EH1_mean .+= _m[(c-1) * n_ana_binning + 1:c*n_ana_binning]
@@ -1145,9 +1145,6 @@ end
                 EH3_var .+= _v[(c-1) * n_ana_binning + 1:c*n_ana_binning]
             end
 
-
-        #end
-        #for (c, (m, v, o)) in enumerate(zip(_mean, _var, obs))
             idx = (c-1) * n_ana_binning + 1 : c * n_ana_binning
             o = data[idx]
             v = _v[idx]
@@ -1205,14 +1202,11 @@ end
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             ylims!(ax, 1e0, 1e4)
-            ## ylims!(ax2, 0.3, 1.0)
-            
 
             save(joinpath(saveto, "$(period)ADAD$(AD).png"), f)
             
         end
 
-        # println(EH1_bg)
         for (c, (m, v, o, bg_d)) in enumerate(zip(_mean, _var, obs, [EH1_bg, EH2_bg, EH3_bg]))
             f = Figure()
             ax = Axis(f[1, 1], yminorticksvisible=true, title="EH$(c)", yminorticks=IntervalsBetween(9), yscale=log10)
@@ -1237,9 +1231,6 @@ end
             hlines!(ax2, 0, label="Expected")
             barplot!(ax2, assets.coarse_binning_c, sqrt.(v) ./ m, width=assets.coarse_bin_width, gap=0, fillto= .- sqrt.(v)./m, alpha=0.5, label="Standard Deviation")
 
-
-
-
             rowgap!(f.layout, 1, 0)
             rowsize!(f.layout, 1, Relative(3/4))
 
@@ -1249,7 +1240,6 @@ end
             xlims!(ax2, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             xlims!(ax, minimum(assets.coarse_binning), maximum(assets.coarse_binning))
             ylims!(ax, 1e1, 1e6)
-            ## ylims!(ax2, 0.3, 1.0)
             
 
             save(joinpath(saveto, "EH_$(c).png"), f)

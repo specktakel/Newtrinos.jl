@@ -1,4 +1,4 @@
-module juno_rewrite
+module juno
 
 using DataFrames
 using CSV
@@ -30,8 +30,6 @@ const YE = 0.5
 end
 
 function default_physics()
-    #osc = Newtrinos.osc.configure(Newtrinos.osc.OscillationConfig(flavour=Newtrinos.osc.ThreeFlavour(ordering=:IO)))
-    #osc = Newtrinos.osc.configure()
     osc = Newtrinos.osc.configure(Newtrinos.osc.OscillationConfig(interaction = Newtrinos.osc.SI(), eigen_method = Newtrinos.BargerEigen()))
     xsec = Newtrinos.ibd_xsec.configure(Newtrinos.ibd_xsec.VogelBeacomO1())
     flux = Newtrinos.dayabay_flux.configure(Newtrinos.dayabay_flux.ReactorFluxConfig(average=true, N_pulls=25))
@@ -142,7 +140,7 @@ function get_priors()
     efficiency = Truncated(Normal(efficiency_mu, efficiency_sigma), 0, Inf)
 
     ## fission fraction scale
-    data = YAML.load_file(joinpath(@__DIR__, "../daya_bay/daya_bay_3158days/dayabay_data/parameters/reactor_fission_fractions_scale.yaml"), dicttype=OrderedDict{String,Any})
+    data = YAML.load_file(joinpath(Newtrinos.dayabay_flux.datadir, "dayabay_data/parameters/reactor_fission_fractions_scale.yaml"), dicttype=OrderedDict{String,Any})
     fraction_scale = data["parameters"]["fission_fractions_scale"]
 
     isotopes = ["U235", "U238", "Pu239", "Pu241"]
@@ -163,7 +161,7 @@ function get_priors()
 
     # spent nuclear fuel, assumes correlation within plant, uncorrelated between plants
     # snf correction
-    file = YAML.load_file(joinpath(@__DIR__, "../daya_bay/daya_bay_3158days/dayabay_data/parameters/reactor_snf.yaml"))
+    file = YAML.load_file(joinpath(Newtrinos.dayabay_flux.datadir, "dayabay_data/parameters/reactor_snf.yaml"))
     snf_mu = Float64(file["parameters"]["snf_scale"][1])
     snf_sigma = snf_mu * Float64(file["parameters"]["snf_scale"][2]) * 0.01   # percent
     juno_taishan_snf_scale = Normal(snf_mu, snf_sigma)
@@ -172,7 +170,7 @@ function get_priors()
 
     #neq, assumes correlation within plant, uncorrelated between plants
     ## non-equilibrium correction
-    file = YAML.load_file(joinpath(@__DIR__, "../daya_bay/daya_bay_3158days/dayabay_data/parameters/reactor_nonequilibrium_correction.yaml"))
+    file = YAML.load_file(joinpath(Newtrinos.dayabay_flux.datadir, "dayabay_data/parameters/reactor_nonequilibrium_correction.yaml"))
     mu = file["parameters"]["nonequilibrium_scale"][1] .* ones(4)
     sigma = mu .* file["parameters"]["nonequilibrium_scale"][2] .* 0.01 # percent
 
@@ -579,10 +577,10 @@ end
 
 function get_plot(physics, assets)
     function plot(params)
-        fwd = Newtrinos.juno_rewrite.get_forward_model(physics, assets, debug=true)
+        fwd = get_forward_model(physics, assets, debug=true)
         f = Figure()
         ax = Axis(f[1, 1], ylabel="Counts / 40keV")
-        ax2 = Axis(f[2, 1], ylabel="Ratio", xlabel="Prompt energy [MeV]")
+        ax2 = Axis(f[2, 1], ylabel="observed/expected", xlabel="Prompt energy [MeV]")
         Ec = assets.Ec
 
         cols = Makie.wong_colors()
@@ -591,25 +589,43 @@ function get_plot(physics, assets)
         all_bg = zeros(size(Ec))
         sig, bg = fwd(params)
         for (k, h) in pairs(bg)
-            stephist!(ax, Ec, weights = h ./assets.hist_to_count, bins=assets.Ebins, label=String(k), color=colors[k])
             all_bg .+= h
         end
-
+        m = sig .+ all_bg
+        s = sqrt.(m)
+        
+        
         Ec = assets.Ec
+        scatter!(ax, Ec, assets.observed ./ assets.hist_to_count, color=:black, label="Observed")
+        stephist!(ax, Ec, weights=m ./ assets.hist_to_count, bins=assets.Ebins, color="blue", label="Newtrinos.jl, signal+bg")
+        barplot!(ax, Ec, (m.+s) ./ assets.hist_to_count, width=diff(assets.Ebins), gap=0, fillto=(m .- s) ./ assets.hist_to_count, alpha=0.5, label="standard deviation")
         stephist!(ax, Ec, weights = assets.signal_mle, bins=assets.Ebins, color=:pink, label="Juno signal")
-        #scatter!(ax, Ec, assets.observed ./assets.hist_to_count, color=:grey, label="Observed")
-        stephist!(ax, Ec, weights=assets.observed ./assets.hist_to_count,bins=assets.Ebins, color=:grey, label="Observed")
-        stephist!(ax, Ec, weights=(sig .+ all_bg) ./ assets.hist_to_count, bins=assets.Ebins, color="red", label="Newtrinos.jl, signal+bg")
-        stephist!(ax, Ec, weights=sig ./ assets.hist_to_count, bins=assets.Ebins, label="Newtrinos.jl, signal")
-        stephist!(ax2, Ec, weights = sig ./ assets.observed, bins=assets.Ebins, label="Newtrinos.jl signal / Juno signal")
-        stephist!(ax2, Ec, weights = (sig .+ all_bg) ./ assets.observed, bins=assets.Ebins, label="Newtrinos.jl exp / observed")
+        #stephist!(ax, Ec, weights=assets.observed ./assets.hist_to_count,bins=assets.Ebins, color=:grey, label="Observed")
+        stephist!(ax, Ec, weights=sig ./ assets.hist_to_count, bins=assets.Ebins, color="red", label="Newtrinos.jl, signal")
+        # stephist!(ax2, Ec, weights = sig ./ assets.observed, bins=assets.Ebins, label="Newtrinos.jl signal / Juno signal")
+        
+        for (k, h) in pairs(bg)
+            stephist!(ax, Ec, weights = h ./assets.hist_to_count, bins=assets.Ebins, label=String(k), color=colors[k])
+        end
+        
+        # relative deviation
+        scatter!(ax2, Ec, assets.observed ./ m, color="black")
+        barplot!(ax2, Ec, 1 .+ s ./ m, width=diff(assets.Ebins), gap=0, fillto=1.0 .- s./m, alpha=0.5, label="Standard deviation")
+        hlines!(ax2, 1, label="Expected")
+        axislegend(ax, position=:rt)
+        
+        rowsize!(f.layout, 1, Relative(3/4))
+        rowgap!(f.layout, 1, 0)
 
-        #axislegend(ax, position=:rt)
-        rowsize!(f.layout, 1, Relative(2/3))
-        ylims!(ax2, .9, 1.1)
-        #xlims!(ax, 1.5, 6)
-        #xlims!(ax2, 1.5, 6)
-        #ylims!(ax,100, 260)
+        ax.xticksvisible = false
+        ax.xticklabelsvisible = false
+        ylims!(ax, 0, 95)
+        xlims!(ax, 0.7, 12)
+        xlims!(ax2, 0.7, 12)
+        
+        ax2.xlabel="Visible energy [MeV]"
+        ax2.ylabel="Counts/Expected"
+        ax.title = "Juno 207 days (+TAO 31 days + DayaBay spectrum pulls)"
         f
 
         return f, ax, ax2
