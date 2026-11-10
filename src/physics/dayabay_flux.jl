@@ -14,7 +14,7 @@ using ..Newtrinos
 export ReactorFluxConfig, DayaBayFlux, flux_basis
 
 
-const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
+const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_forward_model_3158days")
 
 
 abstract type FluxModel end
