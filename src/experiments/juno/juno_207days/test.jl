@@ -46,24 +46,7 @@ if !isdir("test_output")
     mkdir("test_output")
 end
 
-# TODO remove this construct to avoid issue on mac
-for i=1:4
-    println(i)
-    try
-        mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-        FileIO.save("test_output/test_dm21_theta12_mle.jld2", Dict("mle"=>mle))
-        f, ax, ax2 = experiments.juno.plot(mle[3])
-        save("test_output/spectrum_juno.png", f)
-        
-        f = experiments.tao.plot(mle[3])
-        save("test_output/spectrum_tao.png", f)
-    catch e
-        continue
-    finally
-        break
-    end
-end
-#mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
+mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
 
 mle = FileIO.load("test_output/test_dm21_theta12_mle.jld2")["mle"]
 
