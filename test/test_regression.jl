@@ -6,7 +6,7 @@ using Printf
 # If a value changes beyond rtol=1e-6, it indicates a regression.
 # To update: run the experiment and replace the reference value.
 const ALL_REFERENCE_VALUES = (
-    dayabay      = -168.90003273508322,
+    dayabay_simple = -168.90003273508322,
     kamland      = -144.63869819545005,
     minos        = -268.4046154382636,
     deepcore     = -942.5706065958955,
