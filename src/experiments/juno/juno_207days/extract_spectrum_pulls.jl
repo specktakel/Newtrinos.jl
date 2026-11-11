@@ -5,8 +5,6 @@ using Distributions
 using MeasureBase
 using Newtrinos
 
-mle = FileIO.load("test_output/test_mle_19_exp.jld2")["mle"]
-
 db = Newtrinos.dayabay.configure()
 p = Newtrinos.get_params((;db,))
 priors = Newtrinos.get_priors((;db,))

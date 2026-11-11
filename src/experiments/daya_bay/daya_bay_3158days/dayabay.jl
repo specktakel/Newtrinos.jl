@@ -1,4 +1,4 @@
-module dayabay_forward
+module dayabay
 
 using DataFrames
 using CSV
@@ -28,7 +28,7 @@ end
 function default_physics()
     osc = Newtrinos.osc.configure()
     xsec = Newtrinos.ibd_xsec.configure(Newtrinos.ibd_xsec.VogelBeacomO1())
-    flux = Newtrinos.dayabay_flux.configure(Newtrinos.dayabay_flux.ReactorFluxConfig(N_pulls=25))
+    flux = Newtrinos.dayabay_flux.configure()
     (; osc, xsec, flux)
 end
 

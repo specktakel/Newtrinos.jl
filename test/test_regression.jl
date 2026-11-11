@@ -6,6 +6,7 @@ using Printf
 # If a value changes beyond rtol=1e-6, it indicates a regression.
 # To update: run the experiment and replace the reference value.
 const ALL_REFERENCE_VALUES = (
+    dayabay =    -16188.2392767153,
     dayabay_simple = -168.90003273508322,
     kamland      = -144.63869819545005,
     minos        = -268.4046154382636,
@@ -29,6 +30,8 @@ const ALL_REFERENCE_VALUES = (
     borexino_ph1 = 0.6366322757818439,
     borexino_ph2 = -5.065586938970489,
     borexino_ph3 = -2290.7264526090985,
+    juno         = -558.8539987989132,
+    tao          = -1383.5899145882622,
 )
 
 # Parse --experiments from ARGS if present, otherwise run all
