@@ -27,33 +27,19 @@ priors = Newtrinos.get_priors(experiments)
 @reset priors.δCP = p.δCP
 @reset priors.Δm²₂₁ = p.Δm²₂₁
 
-# TODO remove this construct to avoid issue on mac
-for i=1:4
-    println(i)
-    try
-        mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-        FileIO.save("test_output/test_mle.jld2", Dict("mle"=>mle))
-        experiments.dayabay.plot(mle[3]; saveto="test_output")
-    catch e
-        continue
-    finally
-        break
-    end
-end
-
-@time mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-FileIO.save("test_output/test.jld2", Dict("mle"=>mle))
-
-#=
-result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test")
 
 if !isdir("test_output")
     mkdir("test_output")
 end
+mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
+FileIO.save("test_output/test_mle.jld2", Dict("mle"=>mle))
+experiments.dayabay.plot(mle[3], saveto="test_output")
+
+result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test_cache")
 FileIO.save("test_output/test.jld2", Dict("result" => result))
 
 converted = Newtrinos.NewtrinosResult(axes = (sin22theta13 = sin.(2*result.axes.θ₁₃).^2, Δm²₃₂ = result.axes.Δm²₃₁ .- p.Δm²₂₁), values=result.values);
-#official_raw = CSV.read("DayaBay_DeltaChiSq_NO_3158days.txt", DataFrame, skipto=10, delim=" ", header=["sin22theta13", "Dm232", "Deltachi2"], ignorerepeated=true)
+official_raw = CSV.read("DayaBay_DeltaChiSq_NO_3158days.txt", DataFrame, skipto=10, delim=" ", header=["sin22theta13", "Dm232", "Deltachi2"], ignorerepeated=true)
 axes = (sin22theta13 = reshape(official_raw.sin22theta13, 100, 100)[1,:], Δm²₃₂ = reshape(official_raw.Dm232, 100, 100)[:,1])
 values = Array(reshape(official_raw.Deltachi2, 100, 100))'
 official = Newtrinos.NewtrinosResult(axes=axes, values=(log_posterior=-0.5 .* values,))
@@ -86,5 +72,3 @@ open("README.md", "w") do io
         write(io, "- **$(key)**: $(value)\n")
     end
 end
-=#
-
