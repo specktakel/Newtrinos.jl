@@ -56,6 +56,18 @@ using Newtrinos
             nom2, neq2, snf2, corr2 = flux(E, 2.0, params.energy_per_fission, ones(4), params.spectrum_pulls, ones(4), 0, 1)
             @test isapprox(nom1 .* 2, nom2)
         end
+        
+        @testset "linear interpolation" begin
+            config = Newtrinos.dayabay_flux.ReactorFluxConfig(corr_mode=:lin)
+            reactor = Newtrinos.dayabay_flux.configure(config)
+            flux = reactor.flux
+            @test reactor isa Newtrinos.dayabay_flux.ReactorFlux
+            params = Newtrinos.dayabay_flux.get_params(reactor.cfg.flux_model)
+            priors = Newtrinos.dayabay_flux.get_priors(reactor.cfg.flux_model)
+            _, _, _, corr0 = flux(E, 1.0, params.energy_per_fission, ones(4), zeros(19), ones(4), 0, 1)
+            @test all(corr0 .≈ 1)
+            _, _, _, corr1 = flux(E, 1.0, params.energy_per_fission, ones(4), fill(0.1, 19), ones(4), 0, 1)
+            @test all(corr1 .≈ 1.1)
+        end
     end
-
 end

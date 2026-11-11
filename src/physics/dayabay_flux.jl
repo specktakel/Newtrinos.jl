@@ -14,7 +14,7 @@ using ..Newtrinos
 export ReactorFluxConfig, DayaBayFlux, flux_basis
 
 
-const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_forward_model_3158days")
+const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
 
 
 abstract type FluxModel end
@@ -25,6 +25,7 @@ abstract type FluxModel end
     datadir::String = datadir
     average::Bool = false
     N_pulls::Int64 = 19
+    corr_mode = :exp
 end
 
 
@@ -39,6 +40,7 @@ end
     flux_on_mesh::Function
     datadir::String
     average::Bool
+    corr_mode::Symbol
 end
 
 
@@ -47,10 +49,11 @@ function configure(cfg::ReactorFluxConfig = ReactorFluxConfig())
         cfg=cfg,
         params = get_params(cfg.flux_model, datadir=cfg.datadir, N_pulls=cfg.N_pulls),
         priors = get_priors(cfg.flux_model, datadir=cfg.datadir, N_pulls=cfg.N_pulls),
-        flux = get_flux(cfg.flux_model, datadir=cfg.datadir, average=cfg.average),
-        flux_on_mesh = get_flux_on_mesh(cfg.flux_model, datadir=cfg.datadir, average=cfg.average, N_pulls=cfg.N_pulls),
+        flux = get_flux(cfg.flux_model, datadir=cfg.datadir, average=cfg.average, corr_mode=cfg.corr_mode, N_pulls=cfg.N_pulls),
+        flux_on_mesh = get_flux_on_mesh(cfg.flux_model, datadir=cfg.datadir, average=cfg.average, corr_mode=cfg.corr_mode, N_pulls=cfg.N_pulls),
         datadir = cfg.datadir,
         average=cfg.average,
+        corr_mode=cfg.corr_mode
     )
 end
 
@@ -205,7 +208,7 @@ snf_scale, reac_idx; correction)` gives `(main, neq, snf, correction)` at the an
 Everything that does not depend on the parameters (isotope spectra, NEQ and SNF corrections, interpolation weights of
 the free spectrum correction) is tabulated once for the mesh `E`.
 """
-function get_flux_on_mesh(cfg::DayaBayFlux; datadir = datadir, average = false, N_pulls = 19)
+function get_flux_on_mesh(cfg::DayaBayFlux; datadir = datadir, average = false, N_pulls = 19, corr_mode = :exp)
 
     # fixed ordering of isotopes
     names = (:U235, :U238, :Pu239, :Pu241)
@@ -310,8 +313,10 @@ function get_flux_on_mesh(cfg::DayaBayFlux; datadir = datadir, average = false, 
 
         k = [clamp(searchsortedlast(spec_edges, e), 1, length(spec_edges) - 1) for e in E]
         t = clamp.([(e - spec_edges[kk]) / (spec_edges[kk+1] - spec_edges[kk]) for (e, kk) in zip(E, k)], 0, 1)
-        #spectrum_correction(pulls) = @. exp(pulls[k] + t * (pulls[k+1] - pulls[k]))
-        spectrum_correction(pulls) = @. (1 + pulls[k] + t * (pulls[k+1] - pulls[k]))
+
+        exp_spectrum_correction(pulls) = @. exp(pulls[k] + t * (pulls[k+1] - pulls[k]))
+        lin_spectrum_correction(pulls) = @. (1 + pulls[k] + t * (pulls[k+1] - pulls[k]))
+        spectrum_correction = corr_mode == :exp ? exp_spectrum_correction : lin_spectrum_correction
         # `correction` can be passed in when it is shared by several reactors (it depends only on `pulls`)
         function flux(thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls, neq_scale, snf_scale, reac_idx;
             correction = spectrum_correction(pulls))
@@ -331,7 +336,7 @@ function get_flux_on_mesh(cfg::DayaBayFlux; datadir = datadir, average = false, 
 end
 
 """
-    get_flux(cfg; datadir, average)
+    get_flux(cfg; datadir, average, corr_mode)
 
 Returns `reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls, neq_scale,
 snf_scale, reac_idx) -> (main, neq, snf, correction)` at antineutrino energies `E` (number or vector): the
@@ -339,8 +344,8 @@ antineutrino spectrum per GW thermal power [ν/s/MeV/GW] and the extra flux from
 SNF flux [ν/s/MeV] of a reactor at nominal power, and the free spectrum correction, which multiplies only `main` (as
 in the official model). For repeated evaluation on a fixed mesh use [`get_flux_on_mesh`](@ref).
 """
-function get_flux(cfg::DayaBayFlux; datadir = datadir, average = false)
-    on_mesh = get_flux_on_mesh(cfg; datadir = datadir, average = average)
+function get_flux(cfg::DayaBayFlux; datadir = datadir, average = false, corr_mode = :exp, N_pulls = 19)
+    on_mesh = get_flux_on_mesh(cfg; datadir = datadir, average = average, corr_mode = corr_mode, N_pulls = N_pulls)
     function reactor_flux(E, args...)
         E isa Number && return map(first, on_mesh([E])(args...))
         on_mesh(collect(Float64, E))(args...)
