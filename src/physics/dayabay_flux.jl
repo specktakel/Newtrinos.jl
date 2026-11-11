@@ -19,7 +19,19 @@ const datadir = joinpath(@__DIR__, "../experiments/daya_bay/daya_bay_3158days")
 
 abstract type FluxModel end
 
+"""
+    ReactorFluxConfig
 
+Config for Daya Bay specific reactor flux model
+
+# Fields
+- `flux_model::FluxModel = DayaBayFlux()`: DayaBay flux model
+- `datadir::String = datadir`: Directory of the DayaBay data set
+- `average::Bool = false`: If true, average over the 6 reactor cores provided in the data, defaults to `false`
+- `N_pulls::Int64 = 19`: Number of spectrum correction pulls to use, defaults to 19 at the energies specified
+  in the DayaBay data set. `25` will use the bin centers of https://arxiv.org/pdf/2501.00746. Other numbers will use LinRange.
+- `corr_mode = :exp`: Sets the scale to scale the flux correction. Defaults to `:exp`. Any other value will use a linear scale.
+"""  
 @kwdef struct ReactorFluxConfig{F<:FluxModel}
     flux_model::F = DayaBayFlux()
     datadir::String = datadir
@@ -28,9 +40,7 @@ abstract type FluxModel end
     corr_mode = :exp
 end
 
-
-struct DayaBayFlux <: FluxModel
-end
+struct DayaBayFlux <: FluxModel end
 
 @kwdef struct ReactorFlux <: Newtrinos.Physics
     cfg::ReactorFluxConfig
@@ -42,7 +52,6 @@ end
     average::Bool
     corr_mode::Symbol
 end
-
 
 function configure(cfg::ReactorFluxConfig = ReactorFluxConfig())
     ReactorFlux(
@@ -96,7 +105,6 @@ function get_priors(flux::DayaBayFlux; datadir = datadir, N_pulls = 19)
     )
 
 end
-
 
 function extract_reactor_spectra(datadir = datadir; average = false)
     file = h5open(joinpath(datadir, "dayabay_data/reactor_antineutrino_spectra_hm.hdf5"))
@@ -200,7 +208,7 @@ function exp_interpolator(x::Vector{Float64}, y::Vector{Float64})
 end
 
 """
-    get_flux_on_mesh(cfg; datadir, average)
+    get_flux_on_mesh(cfg; datadir, average, N_pulls, corr_mode)
 
 Returns `E -> flux` where `flux(thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls, neq_scale,
 snf_scale, reac_idx; correction)` gives `(main, neq, snf, correction)` at the antineutrino energies `E` (see
@@ -336,7 +344,7 @@ function get_flux_on_mesh(cfg::DayaBayFlux; datadir = datadir, average = false, 
 end
 
 """
-    get_flux(cfg; datadir, average, corr_mode)
+    get_flux(cfg; datadir, average, corr_mode, N_pulls)
 
 Returns `reactor_flux(E, thermal_power_scale, energy_per_fission, fission_fractions_scale, pulls, neq_scale,
 snf_scale, reac_idx) -> (main, neq, snf, correction)` at antineutrino energies `E` (number or vector): the
