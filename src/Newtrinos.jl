@@ -47,8 +47,8 @@ include("utils/autodiff.jl")
 include("utils/helpers.jl")
 include("utils/chi2map.jl")
 
+include("experiments/daya_bay/daya_bay_3158days_simple/dayabay.jl")
 include("experiments/daya_bay/daya_bay_3158days/dayabay.jl")
-include("experiments/daya_bay/daya_bay_forward_model_3158days/dayabay.jl")
 include("experiments/minos/minos_sterile_16e20_POT/minos.jl")
 include("experiments/icecube/deepcore_3y_highstats_sample_b/deepcore.jl")  # module deepcore_3y
 include("experiments/icecube/deepcore_8y_verification_sample/deepcore.jl")  # module deepcore_8y

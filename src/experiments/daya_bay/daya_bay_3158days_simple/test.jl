@@ -8,7 +8,7 @@ using Accessors
 using CairoMakie
 using CSV, DataFrames
 
-experiments = (dayabay = Newtrinos.dayabay_forward.configure(),)
+experiments = (dayabay = Newtrinos.dayabay.configure(),)
 
 vars_to_scan = OrderedDict()
 vars_to_scan[:θ₁₃] = 11
@@ -27,15 +27,11 @@ priors = Newtrinos.get_priors(experiments)
 @reset priors.δCP = p.δCP
 @reset priors.Δm²₂₁ = p.Δm²₂₁
 
+result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test")
 
 if !isdir("test_output")
     mkdir("test_output")
 end
-mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
-FileIO.save("test_output/test_mle.jld2", Dict("mle"=>mle))
-experiments.dayabay.plot(mle[3], saveto="test_output")
-
-result = Newtrinos.profile(likelihood, priors, vars_to_scan, p, cache_dir="test_cache")
 FileIO.save("test_output/test.jld2", Dict("result" => result))
 
 converted = Newtrinos.NewtrinosResult(axes = (sin22theta13 = sin.(2*result.axes.θ₁₃).^2, Δm²₃₂ = result.axes.Δm²₃₁ .- p.Δm²₂₁), values=result.values);
@@ -50,23 +46,21 @@ ax.title = "DayaBay NO 1,2,3 sigma C.L. contours"
 plot!(ax, converted, levels=1 .- 2*ccdf(Normal(), 1:3), label="ours")
 plot!(ax, official, levels=1 .- 2*ccdf(Normal(), 1:3), label="official", color=:red)
 ax.xlabel = "sin²2θ₁₃"
-ax.ylabel = "Δm²₃₂ [eV²]"
+ax.ylabel = "Δm²₃₂ (eV²)"
 axislegend(ax)
 save("test_output/contours.png", fig)
 
+bestfit = Newtrinos.bestfit(result)
+
+fig = experiments.dayabay.plot(bestfit)
+save("test_output/datamc.png", fig)
+
 open("README.md", "w") do io
     write(io, "# DayaBay\n ## Resources\n")
-    write(io, "Data from https://zenodo.org/records/17587229\n\n")
-    write(io, "## General information\n")
-    write(io, "In contrast to `../daya_bay_3158days/dayabay.jl, this module")
-    write(io, "forward models from reactor spectra to the data space.")
+    write(io, "Data from supplemental files on https://arxiv.org/abs/2211.14988\n\n")
     write(io, "\n## Test output plots\n")
-    write(io, "These plots are generated using 25 pull parameters on the reactor spectrum.")
     write(io, "![Comparison](test_output/contours.png)\n")
-    write(io, "![DataMC EH1](test_output/EH_1.png)\n")
-    write(io, "![DataMC EH2](test_output/EH_2.png)\n")
-    write(io, "![DataMC EH3](test_output/EH_3.png)\n")
-    write(io, "Plots for individual EHs per 6/8/7 AD period in `test_output`\n")
+    write(io, "![DataMC](test_output/datamc.png)\n")
     write(io, "## Meta Information\n")
     for (key, value) in result.meta
         write(io, "- **$(key)**: $(value)\n")
