@@ -10,6 +10,7 @@ makedocs(
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
         canonical = "https://$(repo_owner).github.io/Newtrinos.jl",
+        assets = ["assets/home-link.js"],
     ),
     pages = [
         "Home" => "index.md",
@@ -22,6 +23,7 @@ makedocs(
             "Neutrino physics" => "tutorials/neutrino_physics.md",
             "Assemble a physics model" => "tutorials/physics_model.md",
             "Experiments" => "tutorials/experiments.md",
+            "Data sources" => "tutorials/data_sources.md",
             "Configure an experiment" => "tutorials/configure_experiment.md",
             "Analyse data" => "tutorials/analyse_data.md",
             "Analysis CLI Reference" => "tutorials/cli.md",
