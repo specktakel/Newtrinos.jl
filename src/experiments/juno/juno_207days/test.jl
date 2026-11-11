@@ -24,8 +24,8 @@ val = 0.0851
 err = 0.0024
 theta13 = asin(sqrt(val)) / 2
 theta13_sigma = 1 / (4 * sqrt(-(val - 1) * val)) * err
-spec_pulls_cov = FileIO.load("spectrum_pulls_cov_25.jld2")["cov"]
-spec_pulls_mle = FileIO.load("spectrum_pulls_cov_25.jld2")["mle"]
+spec_pulls_cov = FileIO.load("spectrum_pulls.jld2")["cov"]
+spec_pulls_mle = FileIO.load("spectrum_pulls.jld2")["mle"]
 temp = UpperTriangular(spec_pulls_cov)
 temp += transpose(temp) - Diagonal(diag(temp))
 @reset priors.spectrum_pulls = MvNormal(spec_pulls_mle, temp)
@@ -47,8 +47,15 @@ if !isdir("test_output")
 end
 
 mle = Newtrinos.find_mle(likelihood, distprod(;priors...), p)
+FileIO.save("test_output/test_mle.jld2", Dict("mle"=>mle))
 
-mle = FileIO.load("test_output/test_dm21_theta12_mle.jld2")["mle"]
+f, ax, ax2 = experiments.juno.plot(mle[3])
+save("test_output/spectrum_juno.png", f)
+f = experiments.tao.plot(mle[3])
+save("test_output/spectrum_tao.png", f)
+println(mle[3])
+
+#mle = FileIO.load("test_output/test_dm21_theta12_mle.jld2")["mle"]
 
 vars_to_scan = OrderedDict()
 vars_to_scan[:θ₁₂] = 10

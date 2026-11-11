@@ -8,7 +8,7 @@ using Accessors
 using CairoMakie
 using CSV, DataFrames
 
-experiments = (dayabay = Newtrinos.dayabay_forward.configure(),)
+experiments = (dayabay = Newtrinos.dayabay.configure(),)
 
 vars_to_scan = OrderedDict()
 vars_to_scan[:θ₁₃] = 11
@@ -20,7 +20,7 @@ p = Newtrinos.get_params(experiments)
 priors = Newtrinos.get_priors(experiments)
 
 @reset priors.Δm²₃₁ = Uniform(0.0023, 0.0028)
-@reset priors.θ₁₃ = Uniform(0.13, 0.16)
+@reset priors.θ₁₃ = Uniform(asin(sqrt(0.07))/2, asin(sqrt(0.10)/2))
 
 @reset priors.θ₁₂ = p.θ₁₂
 @reset priors.θ₂₃ = p.θ₂₃
