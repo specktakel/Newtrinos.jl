@@ -1,4 +1,4 @@
-module dayabay
+module dayabay_simple
 using DataFrames
 using CSV
 using LinearAlgebra
